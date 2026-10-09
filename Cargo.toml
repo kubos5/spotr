@@ -1,0 +1,64 @@
+[package]
+name = "spotr"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Spotr: A better Spotify client, for the terminal"
+license = "GPL-3.0-or-later"
+readme = "README.md"
+keywords = ["spotify", "tui", "terminal", "music", "player"]
+categories = ["command-line-utilities", "multimedia::audio"]
+
+[features]
+default = ["local-player"]
+# Built-in Spotify Connect player (librespot). Enables the real-time audio
+# visualizer and playback speed control.
+local-player = [
+    "dep:librespot-core",
+    "dep:librespot-playback",
+    "dep:librespot-connect",
+    "dep:librespot-oauth",
+    "dep:cpal",
+]
+
+[dependencies]
+anyhow = "1.0"
+base64 = "0.23"
+crossterm = "0.29"
+deunicode = "1.6"
+dirs = "7.0"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+log = { version = "0.4", features = ["std"] }
+open = "5.4"
+rand = "0.10"
+ratatui = "0.30"
+ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls", "http2", "charset"] }
+# Both reqwest (aws-lc-rs) and librespot (ring) pull in rustls backends; we pick
+# one explicitly at startup, otherwise rustls panics when librespot connects.
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+tokio = { version = "1", features = ["full"] }
+toml = "1.1"
+unicode-width = "0.2"
+url = "2.5"
+
+librespot-core = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-playback = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-connect = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-webpki-roots"] }
+librespot-oauth = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-webpki-roots"] }
+cpal = { version = "0.15", optional = true }
+souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[target."cfg(unix)".dependencies]
+libc = "0.2.190"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
