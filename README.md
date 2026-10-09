@@ -4,30 +4,7 @@
 
 Spotr is a keyboard-first Spotify client with a big-type now-playing screen, cover art drawn either as a real image or as pixel art made of text, a live audio visualizer, synced lyrics, and a command bar that does everything. It follows your terminal's color theme, works with the mouse too, and can turn itself into a Spotify Connect speaker.
 
-```
-╭──────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ⌕ Search songs, artists, albums, playlists…  (/)                 you  ·  ◈ Spotr             │
-╰──────────────────────────────────────────────────────────────────────────────────────────────╯
-
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   █▄ █ ▀█▀ ▄▀▀ █ █ ▀█▀    █▀▄ █▀▄ ▀█▀ █ █ █▀▀
-    ▀▀▀▀▀▀▀▀▀▀▀▀ cover art ▀▀▀▀▀▀▀▀▀▀▀   █ ▀█  █  █ █ █▀█  █     █ █ █▀▄  █  █ █ █▀
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   ▀  ▀ ▀▀▀  ▀▀ ▀ ▀  ▀     ▀▀  ▀ ▀ ▀▀▀  ▀  ▀▀▀
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   Neon Harbor
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   Midnight Arcade · 2024
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   0:44 ━━━━━━━━━━━━━━━━━●─────────────────────── 2:30
-    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   ⤮  ⏮  ⏸  ⏭  ↻    ♥    ♪ ▮▮▮▮▮▯▯▯  65%
-
-         ▄     ▄       ▄                   ▄             ▄     ▄ ▄           ▄ ▄
-   █   █ █ █   █ █   █ █   █ █ █   █ █   █ █ █   █ █     █ █   █ █   █ █ █ █ █ █ █ █ █
-   █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █ █
-╭──────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ❯ Type a command — play, next, skip 10, volume 60, lyrics, queue, help…                      │
-╰──────────────────────────────────────────────────────────────────────────────────────────────╯
- ␣ pause   ←→ skip 10s   [ ] prev/next   / search   ? help   , settings   Tab arrow mode
-```
+<img width="1950" height="1296" alt="CleanShot 2026-10-10 at 01 02 41@2x" src="https://github.com/user-attachments/assets/c5bc9730-eb43-489b-a174-07a03ec78ce3" />
 
 Want a look before setting anything up? Run **`spotr --demo`** — a fictional catalog with a simulated player, no account needed.
 
