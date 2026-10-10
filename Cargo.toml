@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 readme = "README.md"
 keywords = ["spotify", "tui", "terminal", "music", "player"]
 categories = ["command-line-utilities", "multimedia::audio"]
+repository = "https://github.com/kubos5/spotr"
 
 [features]
 default = ["local-player"]
@@ -56,6 +57,11 @@ souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
 
 [target."cfg(unix)".dependencies]
 libc = "0.2.190"
