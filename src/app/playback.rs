@@ -42,6 +42,14 @@ impl App {
         self.pb.repeat = p.repeat_state;
         self.pb.volume = p.device.as_ref().and_then(|d| d.volume_percent);
         self.pb.device = p.device;
+        if let Some(id) = self.pb.device.as_ref().and_then(|d| d.id.clone()) {
+            self.last_device_id = Some(id);
+        }
+        if self.is_local_active()
+            && let Some(v) = self.pb.volume
+        {
+            self.remember_volume(v);
+        }
         self.pb.context_uri = p.context.map(|c| c.uri);
         self.pb.track = p.item;
         if old_uri != new_uri {
@@ -190,9 +198,20 @@ impl App {
         self.seek_to(target);
     }
 
+    /// Keep the built-in player's volume for the next session.
+    fn remember_volume(&mut self, v: u32) {
+        if self.cfg.playback.volume != v {
+            self.cfg.playback.volume = v;
+            self.volume_save_at = Some(Instant::now() + std::time::Duration::from_secs(2));
+        }
+    }
+
     pub fn set_volume(&mut self, v: u32) {
         let v = v.min(100);
         self.pb.volume = Some(v);
+        if self.is_local_active() || self.pb.device.is_none() {
+            self.remember_volume(v);
+        }
         self.pb.hold(1200);
         let icon = if v == 0 { self.theme.icon(crate::theme::Icon::Mute) } else { self.theme.icon(crate::theme::Icon::Volume) };
         self.osd(icon, format!("Volume {v}%"), Some(v as f32 / 100.0));
@@ -407,6 +426,11 @@ impl App {
         }
         self.stop_local_player();
         self.local_status = LocalStatus::Connecting;
+        if let Some((at, n)) = &mut self.local_retry {
+            // Rescheduled by `on_local_failed` if this attempt fails too.
+            *at = Instant::now() + std::time::Duration::from_secs(3600);
+            *n += 1;
+        }
         let opts = LocalOptions {
             device_name: self.cfg.general.device_name.clone(),
             device_id: self.cfg.general.device_id.clone(),
@@ -414,6 +438,7 @@ impl App {
             normalisation: self.cfg.general.normalisation,
             cache_dir: self.paths.librespot_dir(),
             audio: self.audio.clone(),
+            volume: self.cfg.playback.volume,
         };
         let sp = self.spotify.clone();
         let http = self.http.clone();
@@ -480,6 +505,47 @@ impl App {
                 }
             }
             LocalEvent::Stopped | LocalEvent::TrackEnded | LocalEvent::TrackChanged => self.poll_soon(250),
+            LocalEvent::Disconnected { session } => {
+                let current = self.local.as_ref().is_some_and(|p| p.session() == session);
+                if current && self.local_status == LocalStatus::Ready && self.quit_at.is_none() {
+                    log::warn!("built-in player lost its Spotify session; reconnecting");
+                    self.toast(ToastKind::Warn, "Built-in player lost its connection — reconnecting…");
+                    self.reconnect_local_player();
+                }
+            }
+        }
+    }
+
+    /// Restart the built-in player, retrying with backoff until it comes back.
+    pub fn reconnect_local_player(&mut self) {
+        if self.local_retry.is_none() {
+            self.local_retry = Some((Instant::now(), 0));
+        }
+        self.start_local_player(false);
+    }
+
+    /// The built-in player failed to start. Returns true if a retry is scheduled.
+    pub(super) fn on_local_failed(&mut self) -> bool {
+        let Some((_, n)) = self.local_retry else { return false };
+        let wait = (5u64 << n.min(4)).min(60);
+        log::info!("built-in player reconnect #{n} failed; next try in {wait}s");
+        self.local_retry = Some((Instant::now() + std::time::Duration::from_secs(wait), n));
+        true
+    }
+
+    /// A player command failed because its device has disappeared.
+    pub(super) fn on_device_lost(&mut self, device: Option<String>) {
+        self.pb.hold_until = Instant::now();
+        self.poll_now();
+        let local = device.as_deref() == Some(self.cfg.general.device_id.as_str());
+        if local && self.local_status == LocalStatus::Ready {
+            // Our own Connect device is gone: its session died without telling us.
+            self.toast(ToastKind::Warn, "The built-in player dropped off Spotify — reconnecting, try again in a moment");
+            self.reconnect_local_player();
+        } else {
+            self.last_device_id = None;
+            self.toast(ToastKind::Warn, "That device is no longer available — pick one with Ctrl+D / `devices`");
+            self.set_overlay(Overlay::Devices);
         }
     }
 }

@@ -54,6 +54,8 @@ pub enum AppEvent {
     LocalReady(Result<LocalPlayer, String>),
     /// A background command finished. `ok` is shown as a toast/flash.
     Done { ok: Option<String>, err: Option<String>, refresh: bool },
+    /// A player command failed because its device is gone, even after trying to wake it.
+    DeviceLost { device: Option<String> },
     Toast(ToastKind, String),
     Enqueue(Track),
     /// A media key / OS media control.
@@ -373,6 +375,12 @@ pub struct App {
     pub pb: PlaybackState,
     pub saved_current: Option<bool>,
     pub muted_volume: Option<u32>,
+    /// When to write the remembered volume to disk (debounced).
+    pub volume_save_at: Option<Instant>,
+    /// The device that was last active, to wake it up again after Spotify idles it out.
+    pub last_device_id: Option<String>,
+    /// Automatic reconnect of the built-in player: when to try next, and how many tries so far.
+    pub local_retry: Option<(Instant, u32)>,
     pub speed: f32,
 
     pub view: MainView,
@@ -473,6 +481,9 @@ impl App {
             pb: PlaybackState::default(),
             saved_current: None,
             muted_volume: None,
+            volume_save_at: None,
+            last_device_id: None,
+            local_retry: None,
             speed: 1.0,
             view: MainView::NowPlaying,
             search_open: false,
@@ -606,15 +617,32 @@ impl App {
     /// Run a Spotify call in the background; report success / failure.
     pub fn run<F, Fut>(&self, ok: Option<String>, f: F)
     where
-        F: FnOnce(Arc<Spotify>) -> Fut + Send + 'static,
+        F: FnOnce(Arc<Spotify>) -> Fut + Clone + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
         let sp = self.spotify.clone();
+        // Spotify drops idle devices from the active state; a command then fails with
+        // "no active device" / "device not found". Wake the last device and retry once.
+        let wake = self.last_device_id.clone().or_else(|| self.fallback_device());
+        let retry = f.clone();
         self.spawn(async move {
-            match f(sp).await {
-                Ok(()) => AppEvent::Done { ok, err: None, refresh: true },
-                Err(e) => AppEvent::Done { ok: None, err: Some(e.to_string()), refresh: true },
+            let err = match f(sp.clone()).await {
+                Ok(()) => return AppEvent::Done { ok, err: None, refresh: true },
+                Err(e) => e,
+            };
+            if !crate::spotify::api::is_no_device(&err) {
+                return AppEvent::Done { ok: None, err: Some(err.to_string()), refresh: true };
             }
+            log::info!("player command hit a missing device ({err}); waking {wake:?}");
+            if let Some(id) = &wake
+                && sp.transfer(id, false).await.is_ok()
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                if retry(sp).await.is_ok() {
+                    return AppEvent::Done { ok, err: None, refresh: true };
+                }
+            }
+            AppEvent::DeviceLost { device: wake }
         });
     }
 
@@ -830,12 +858,18 @@ impl App {
                 Ok(p) => {
                     self.local = Some(p);
                     self.local_status = LocalStatus::Ready;
+                    if self.local_retry.take().is_some() {
+                        self.toast(ToastKind::Success, "Built-in player reconnected");
+                    }
                     if let Some(o) = self.onboarding.as_mut() {
                         o.player_ready();
                     }
                 }
                 Err(e) => {
-                    if self.local_status != LocalStatus::NeedsLogin {
+                    if self.local_status != LocalStatus::NeedsLogin && self.on_local_failed() {
+                        // Retrying quietly in the background.
+                        self.local_status = LocalStatus::Failed(e.clone());
+                    } else if self.local_status != LocalStatus::NeedsLogin {
                         self.local_status = LocalStatus::Failed(e.clone());
                         self.toast(ToastKind::Error, format!("Built-in player: {e}"));
                     }
@@ -858,6 +892,7 @@ impl App {
                     self.poll_soon(350);
                 }
             }
+            AppEvent::DeviceLost { device } => self.on_device_lost(device),
             AppEvent::Toast(kind, msg) => self.toast(kind, msg),
             AppEvent::Enqueue(t) => self.enqueue(t),
             AppEvent::Media(key) => self.on_media_key(key),
@@ -901,6 +936,13 @@ impl App {
             && q.elapsed() > Duration::from_millis(450) {
                 self.running = false;
             }
+        if self.volume_save_at.is_some_and(|t| now >= t) {
+            self.volume_save_at = None;
+            self.save_config();
+        }
+        if self.local_retry.is_some_and(|(t, _)| now >= t) && self.local_status != LocalStatus::Connecting {
+            self.start_local_player(false);
+        }
 
         if self.onboarding.is_some() {
             return;
@@ -1119,10 +1161,13 @@ impl App {
     }
 
     pub fn quit(&mut self) {
+        if self.volume_save_at.take().is_some() {
+            self.save_config();
+        }
         if let Some(p) = &self.local {
             p.shutdown();
         }
-        if self.motion.enabled {
+        if self.motion.enabled && self.cfg.general.goodbye {
             if self.quit_at.is_none() {
                 self.quit_at = Some(Instant::now());
             }

@@ -141,6 +141,8 @@ pub struct General {
     pub poll_interval_ms: u64,
     pub mouse: bool,
     pub splash: bool,
+    /// Play the closing animation on quit.
+    pub goodbye: bool,
     /// Report playback to the OS (Now Playing, MPRIS) and accept media keys.
     pub media_controls: bool,
     pub device_id: String,
@@ -204,6 +206,8 @@ pub struct Playback {
     pub bracket_mode: ArrowMode,
     pub search_context: SearchContext,
     pub digit_seek: bool,
+    /// Volume of the built-in player, remembered across sessions.
+    pub volume: u32,
     /// Seconds before the end of a track at which the next Spotr-queue item is handed to Spotify.
     pub queue_handoff: u32,
 }
@@ -246,6 +250,7 @@ impl Default for General {
             poll_interval_ms: 1000,
             mouse: true,
             splash: true,
+            goodbye: true,
             media_controls: true,
             device_id: String::new(),
         }
@@ -307,6 +312,7 @@ impl Default for Playback {
             search_context: SearchContext::Album,
             digit_seek: true,
             queue_handoff: 3,
+            volume: 70,
         }
     }
 }
@@ -396,6 +402,7 @@ impl Config {
         self.visualizer.sensitivity = self.visualizer.sensitivity.clamp(0.2, 4.0);
         self.playback.seek_step = self.playback.seek_step.clamp(1, 600);
         self.playback.volume_step = self.playback.volume_step.clamp(1, 50);
+        self.playback.volume = self.playback.volume.min(100);
         self.playback.speed_step = self.playback.speed_step.clamp(0.05, 1.0);
         self.playback.queue_handoff = self.playback.queue_handoff.clamp(1, 15);
         // Spotify caps search at 10 results per type (Feb 2026).

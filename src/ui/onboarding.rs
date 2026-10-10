@@ -127,8 +127,9 @@ fn paragraph(buf: &mut Buffer, area: Rect, y: u16, text: &str, style: Style) -> 
 fn welcome(app: &mut App, buf: &mut Buffer, area: Rect) {
     let th = app.theme.clone();
     let entered = app.onboarding.as_ref().map(|o| o.entered).unwrap_or(app.started);
+    // Everything below is laid out as if the title were 3 rows tall.
     let y = area.y + 2;
-    big_title(app, buf, Rect { x: area.x, y, width: area.width, height: 3 }, "SPOTR", entered, true, crate::font::BLOCK);
+    let y = y + brand_title(app, buf, Rect { x: area.x, y, width: area.width, height: 3 }, "SPOTR", entered) - 3;
     // Rainbow underline wave.
     let pal = th.spectrum();
     let ww = 30u16.min(area.width);
@@ -370,8 +371,7 @@ fn done(app: &mut App, buf: &mut Buffer, area: Rect) {
     let th = app.theme.clone();
     let entered = app.onboarding.as_ref().map(|o| o.entered).unwrap_or(app.started);
     let mut y = area.y + 1;
-    big_title(app, buf, Rect { x: area.x, y, width: area.width, height: 3 }, "READY", entered, true, crate::font::BLOCK);
-    y += 5;
+    y += brand_title(app, buf, Rect { x: area.x, y, width: area.width, height: 3 }, "READY", entered) + 2;
     let u = th.unicode;
     let k = |a| app.keymap.hint(a, u);
     use crate::keys::Action as A;

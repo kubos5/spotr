@@ -116,6 +116,7 @@ fn parse_args() -> Option<Args> {
                     normalisation: false,
                     cache_dir: dir,
                     audio: Default::default(),
+                    volume: 70,
                 };
                 let r = rt.block_on(player::start(opts, Some("not-a-real-token".into()), tx));
                 println!("connect result: {:?}", r.err().map(|e| e.to_string()));

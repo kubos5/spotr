@@ -211,9 +211,7 @@ pub fn about(app: &mut App, buf: &mut Buffer, area: Rect) {
     let inner = popup(app, buf, r, "About");
     let th = app.theme.clone();
     let mut y = inner.y + 1;
-    let font = crate::font::BLOCK;
-    big_title(app, buf, Rect { x: inner.x, y, width: inner.width, height: 3 }, "SPOTR", app.view_changed_at, true, font);
-    y += 4;
+    y += brand_title(app, buf, Rect { x: inner.x, y, width: inner.width, height: 3 }, "SPOTR", app.view_changed_at) + 1;
     let player = match &app.local_status {
         LocalStatus::Ready => format!("built-in player ready (“{}”)", app.cfg.general.device_name),
         LocalStatus::Connecting => "built-in player starting…".into(),

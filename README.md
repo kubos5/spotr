@@ -340,6 +340,10 @@ Override them with `SPOTR_CONFIG_DIR` and `SPOTR_CACHE_DIR`.
 Example config:
 
 ```toml
+[general]
+splash = true               # startup animation
+goodbye = true              # closing animation
+
 [appearance]
 accent = "green"            # green, cyan, blue, magenta, red, yellow, white
 cover_mode = "image"        # image | text
@@ -347,6 +351,7 @@ text_art = "blocks"         # blocks | ascii | ascii-mono | braille
 pixelation = 0              # 0 = sharp; 8, 16, 32… = chunky pixels
 title_font = "ansi-compact" # block, slim, ansi-compact, future, pagga, emboss,
                             # small-block, small-braille, mini, plain, or a user font
+                            # (also used by the startup animation and About)
 big_controls = true
 show_shuffle = true         # the shuffle / loop buttons can be hidden
 show_repeat = true
@@ -368,6 +373,7 @@ height = 7
 seek_step = 10
 arrow_mode = "seek"         # ← / →: seek | track | speed | volume
 bracket_mode = "track"      # [ / ]: same choices
+volume = 70                 # built-in player volume, remembered automatically
 search_context = "album"    # album: keep playing the album after a searched song
 
 [lyrics]

@@ -671,6 +671,6 @@ impl Spotify {
 /// Is this error "there is no active device"?
 pub fn is_no_device(e: &anyhow::Error) -> bool {
     e.downcast_ref::<ApiError>()
-        .map(|a| a.reason.as_deref() == Some("NO_ACTIVE_DEVICE") || (a.status == 404 && a.message.contains("device")))
+        .map(|a| a.reason.as_deref() == Some("NO_ACTIVE_DEVICE") || (a.status == 404 && a.message.to_lowercase().contains("device")))
         .unwrap_or(false)
 }

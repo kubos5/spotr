@@ -137,11 +137,12 @@ pub fn particles(app: &mut App, buf: &mut Buffer, area: Rect) {
 pub fn splash(app: &mut App, buf: &mut Buffer, area: Rect) {
     let Some(start) = app.splash else { return };
     let t = (start.elapsed().as_secs_f32() / 1.2).min(1.0);
-    let y = area.y + area.height / 2 - 3;
-    big_title(app, buf, Rect { x: area.x, y, width: area.width, height: 3 }, "SPOTR", start, true, crate::font::BLOCK);
+    let h = crate::font::lines_for(app.title_font()).max(1);
+    let y = area.y + area.height.saturating_sub(h + 4) / 2;
+    let y = y + brand_title(app, buf, Rect { x: area.x, y, width: area.width, height: h }, "SPOTR", start);
     let tag = "a better Spotify client, for the terminal";
     let shown = anim::typewriter(tag, ((t - 0.3) / 0.6).clamp(0.0, 1.0));
-    put(buf, area.x + area.width.saturating_sub(width(tag)) / 2, y + 4, &shown, app.theme.dim(), area.width);
+    put(buf, area.x + area.width.saturating_sub(width(tag)) / 2, y + 1, &shown, app.theme.dim(), area.width);
     // A little wave of palette colors underneath.
     let pal = app.theme.spectrum();
     let wave_w = 24u16.min(area.width);
@@ -150,7 +151,7 @@ pub fn splash(app: &mut App, buf: &mut Buffer, area: Rect) {
         let phase = anim::clock() * 6.0 + i as f32 * 0.5;
         let lvl = ((phase.sin() * 0.5 + 0.5) * 7.0) as usize;
         let ch = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'][lvl.min(7)];
-        if let Some(c) = buf.cell_mut((x0 + i, y + 6)) {
+        if let Some(c) = buf.cell_mut((x0 + i, y + 3)) {
             c.set_char(if app.theme.unicode { ch } else { '=' }).set_style(Style::new().fg(pal[i as usize % pal.len()]));
         }
     }

@@ -178,6 +178,13 @@ pub fn title_rows(app: &App, text: &str, width: u16, max_height: u16, pref: Font
 }
 
 /// Draw a title with the configured ASCII font. Returns rows used.
+/// `text` in the user's title font, centered. Returns the rows used.
+pub fn brand_title(app: &App, buf: &mut Buffer, area: Rect, text: &str, born: Instant) -> u16 {
+    let font = app.title_font();
+    let h = font::lines_for(font).max(1).min(buf.area.bottom().saturating_sub(area.y));
+    big_title(app, buf, Rect { height: h, ..area }, text, born, true, font)
+}
+
 pub fn big_title(app: &App, buf: &mut Buffer, area: Rect, text: &str, born: Instant, center: bool, font_pref: FontId) -> u16 {
     if area.width == 0 || area.height == 0 || text.is_empty() {
         return 0;

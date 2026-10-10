@@ -20,6 +20,8 @@ pub enum LocalEvent {
     Stopped,
     TrackEnded,
     TrackChanged,
+    /// The librespot session ended without being asked to (network drop, sleep…).
+    Disconnected { session: u64 },
 }
 
 #[cfg_attr(not(feature = "local-player"), allow(dead_code))]
@@ -30,6 +32,8 @@ pub struct LocalOptions {
     pub normalisation: bool,
     pub cache_dir: std::path::PathBuf,
     pub audio: Arc<AudioShared>,
+    /// Starting volume, 0–100.
+    pub volume: u32,
 }
 
 /// Client ID + redirect used by librespot's own OAuth login.
@@ -54,6 +58,9 @@ mod stub {
     impl LocalPlayer {
         pub fn shutdown(&self) {}
         pub fn activate(&self) {}
+        pub fn session(&self) -> u64 {
+            0
+        }
     }
 
     pub async fn start(
@@ -77,7 +84,7 @@ mod stub {
 mod imp {
     use super::*;
     use std::collections::VecDeque;
-    use std::sync::atomic::Ordering;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Condvar, Mutex};
     use std::time::Duration;
 
@@ -103,9 +110,16 @@ mod imp {
     pub struct LocalPlayer {
         spirc: Spirc,
         _player: Arc<Player>,
+        session: u64,
     }
 
+    /// Numbers each started session, so a stale `Disconnected` can be ignored.
+    static SESSIONS: AtomicU64 = AtomicU64::new(0);
+
     impl LocalPlayer {
+        pub fn session(&self) -> u64 {
+            self.session
+        }
         pub fn shutdown(&self) {
             let _ = self.spirc.shutdown();
         }
@@ -170,16 +184,23 @@ mod imp {
             let connect_config = ConnectConfig {
                 name: opts.device_name.clone(),
                 device_type: DeviceType::Computer,
-                initial_volume: (u16::MAX as f32 * 0.7) as u16,
+                initial_volume: (u16::MAX as f32 * opts.volume.min(100) as f32 / 100.0) as u16,
                 ..ConnectConfig::default()
             };
 
             match Spirc::new(connect_config, session.clone(), creds, player.clone(), mixer).await {
                 Ok((spirc, task)) => {
-                    tokio::spawn(task);
+                    let id = SESSIONS.fetch_add(1, Ordering::Relaxed) + 1;
+                    let done = tx.clone();
+                    tokio::spawn(async move {
+                        // Spirc's task ends when we shut it down *or* when the session dies.
+                        task.await;
+                        log::info!("librespot session {id} ended");
+                        let _ = done.send(AppEvent::Local(LocalEvent::Disconnected { session: id }));
+                    });
                     spawn_event_forwarder(player.clone(), tx.clone());
                     let _ = tx.send(AppEvent::Local(LocalEvent::Connected { device_name: opts.device_name.clone() }));
-                    return Ok(LocalPlayer { spirc, _player: player });
+                    return Ok(LocalPlayer { spirc, _player: player, session: id });
                 }
                 Err(e) => {
                     log::warn!("librespot connect failed: {e}");
