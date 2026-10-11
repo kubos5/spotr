@@ -13,6 +13,8 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 
 ---
 
+<br><br>
+
 ## Contents
 
 - [Features](#features)
@@ -35,6 +37,8 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 - [Development](#development)
 - [License](#license)
 
+<br><br>
+
 ## Features
 
 | Feature                 | Description                                                                                                                                                         |
@@ -47,6 +51,8 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 | **Visualizer**          | Above the command bar, you'll see a pretty real time audio visualizer, available in 5 different styles.                                                             |
 
 ... and many more! [Try it for yourself](#installation)
+
+<br><br>
 
 ## Requirements
 
@@ -66,28 +72,43 @@ _Optional:_
 - a terminal with a graphics protocol, such as kitty, WezTerm, iTerm2 or Ghostty.
   Every other terminal gets the text renderer.
 
+<br><br>
+
 ## Installation
 
-### Using package managers
+### Option 1: Using the install script (recommended)
 
-> [!NOTE]
-> For now, the only way to use Spotr is compiling it from source.
-> I'm planning on distributing Spotr through [Homebrew](https://brew.sh/), the [AUR](https://aur.archlinux.org/), [WinGet](https://learn.microsoft.com/en-us/windows/package-manager/winget/), and more. Stay tuned!
-
-For now:
-### Install script
-
-The install script sets up everything Spotr needs (a C compiler, the ALSA headers on Linux, Rust) and then builds and installs Spotr:
-
+Simply run:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
 ```
 
-Or, from a clone of the repository: `./install.sh`. It shows what it will do and asks before changing anything. It supports macOS and Linux (apt, dnf, pacman, zypper, apk). Add `--no-audio` to build without the built-in player.
+Uninstall:
+```bash
+curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/uninstall.sh | bash
+```
 
-Everything the installer adds is recorded, and `./uninstall.sh` removes exactly that. Packages and Rust that you already had are left alone, and your settings are kept unless you choose to delete them (`--purge`).
+---
 
-### Compile from source
+### Option 2: Using Homebrew
+
+Simply run:
+```bash
+brew install kubos5/tap/spotr
+```
+
+Uninstall:
+```bash
+brew uninstall spotr
+```
+
+> [!NOTE]
+> For now, Spotr is only available on Homebrew.
+> I'm planning on distributing Spotr through the [AUR](https://aur.archlinux.org/), [WinGet](https://learn.microsoft.com/en-us/windows/package-manager/winget/), and more. Stay tuned!
+
+---
+
+### Option 3: Compile manually
 
 ```bash
 git clone https://github.com/kubos5/spotr.git
@@ -99,7 +120,12 @@ This puts the binary in `~/.cargo/bin`.
 
 `--locked`: `Cargo.lock` pins a build-time dependency of librespot (`vergen` 9.0.x), because a newer one breaks librespot's build script. 
 
-#### Build without installing:
+> [!NOTE]
+> This is what the [install script](#option-1-using-the-install-script-recommended) already does. Consider using that!
+
+---
+
+#### To build without installing:
 
 ```bash
 cargo build --release
@@ -107,7 +133,9 @@ cargo build --release
 
 The binary is then `target/release/spotr`.
 
-#### Compile without audio features
+---
+
+#### Compiling without audio features
 
 > [!WARNING]
 > **This probably isn't for you.**
@@ -124,6 +152,8 @@ In this build the visualizer always uses its simulation and `speed` is unavailab
 
 On Linux the OS media integration talks to D-Bus in pure Rust, so no extra system libraries are needed for it.
 
+<br><br>
+
 ## First launch
 
 1. run `spotr`
@@ -137,6 +167,8 @@ When creating the app in the Spotify Developer Console:
 - tick `Web API` and `Web Playback SDK`
 
 You can run the walkthrough again any time with `spotr --setup` or the `onboarding` command.
+
+<br><br>
 
 ## Using Spotr
 
@@ -336,6 +368,8 @@ When music plays on another device, Spotr can't access the audio, so the visuali
 
 Turn it off in *Settings → Look → Mouse support* if you'd rather use the mouse select text.
 
+<br><br>
+
 ## Configuration
 
 Almost everything is in the Settings panel (`,`), which saves automatically. The file lives at:
@@ -437,6 +471,8 @@ Licenses for the bundled fonts are in [`assets/fonts/README.md`](assets/fonts/RE
 
 Your Spotify token is stored separately in `token.json` next to the config, readable only by your user. Spotr never sees your password.
 
+<br><br>
+
 ## Command-line options
 
 ```
@@ -454,6 +490,8 @@ spotr [OPTIONS]
     -h, --help      Show help
     -V, --version   Show the version
 ```
+
+<br><br>
 
 ## How it works
 
@@ -495,6 +533,8 @@ src/
 assets/fonts/      bundled FIGlet / TOIlet fonts (+ licenses)
 ```
 
+<br><br>
+
 ## Troubleshooting
 
 **"No active device":** Spotify needs somewhere to play. Open Spotify on any device, enable the built-in player, or pick a device with `Ctrl+D`.
@@ -522,6 +562,8 @@ assets/fonts/      bundled FIGlet / TOIlet fonts (+ licenses)
 
 **Logs:** `spotr --debug` writes `spotr.log` to the cache directory (`spotr --print-paths`).
 
+<br><br>
+
 ## Development
 
 ```bash
@@ -535,6 +577,8 @@ cargo run -- --test-connect  # connect librespot with a dummy token: should end 
 The `local-player` feature (on by default) pulls in librespot and cpal. Build with `--no-default-features` for a lighter, Web-API-only build.
 
 Contributions are welcome.
+
+<br><br>
 
 ## License
 
