@@ -75,6 +75,18 @@ _Optional:_
 > I'm planning on distributing Spotr through [Homebrew](https://brew.sh/), the [AUR](https://aur.archlinux.org/), [WinGet](https://learn.microsoft.com/en-us/windows/package-manager/winget/), and more. Stay tuned!
 
 For now:
+### Install script
+
+The install script sets up everything Spotr needs (a C compiler, the ALSA headers on Linux, Rust) and then builds and installs Spotr:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
+```
+
+Or, from a clone of the repository: `./install.sh`. It shows what it will do and asks before changing anything. It supports macOS and Linux (apt, dnf, pacman, zypper, apk). Add `--no-audio` to build without the built-in player.
+
+Everything the installer adds is recorded, and `./uninstall.sh` removes exactly that. Packages and Rust that you already had are left alone, and your settings are kept unless you choose to delete them (`--purge`).
+
 ### Compile from source
 
 ```bash
