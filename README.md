@@ -78,6 +78,10 @@ _Optional:_
 
 ### Option 1: Using the install script (recommended)
 
+> [!NOTE]
+> The install script only works on Linux and macOS.
+> If you're on Windows, you can [compile from source](#option-3-compile-manually)
+
 Simply run:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
