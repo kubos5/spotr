@@ -70,11 +70,13 @@ if [ "$UNI" = 1 ]; then
     OK="✓"; FAIL="✗"; ARROW="❯"; DOT="·"; NOTE="ℹ"; ELL="…"
     SPIN=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
     WAVE=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    BAR_ON="━"; BAR_KNOB="●"; BAR_OFF="─"
 else
     TL="+"; TR="+"; BL="+"; BR="+"; H="-"; V="|"
     OK="ok"; FAIL="x"; ARROW=">"; DOT="-"; NOTE="i"; ELL="~"
     SPIN=("|" "/" "-" "\\")
     WAVE=("_" "." "-" "~" "~" "^" "^" "^")
+    BAR_ON="="; BAR_KNOB=">"; BAR_OFF="-"
 fi
 
 COLS=$(tput cols 2>/dev/null || echo 80)
@@ -167,12 +169,13 @@ draw_logo() {
 
 SINE=(4 5 6 7 7 6 5 4 3 2 1 0 0 1 2 3)
 wave() {
-    local t=$1 n=30 i lvl col out="" pad
+    local t=$1 n=32 i lvl col out="" pad
     pad=$(( (COLS - n) / 2 )); [ "$pad" -lt 0 ] && pad=0
     for ((i = 0; i < n; i++)); do
-        lvl=${SINE[$(( (i + t) % ${#SINE[@]} ))]}
+        # Column 0 is one to the left of where the 30-column wave used to start.
+        lvl=${SINE[$(( (i - 1 + t + ${#SINE[@]}) % ${#SINE[@]} ))]}
         if [ "${#PALETTE[@]}" -gt 0 ]; then
-            col=${PALETTE[$(( i % ${#PALETTE[@]} ))]}
+            col=${PALETTE[$(( (i - 1 + ${#PALETTE[@]}) % ${#PALETTE[@]} ))]}
             out+=$'\e['"${col}m${WAVE[$lvl]}"
         else
             out+="${WAVE[$lvl]}"
@@ -212,11 +215,40 @@ banner() {
     echo
 }
 
-# step "Label" command…   — runs a command with a spinner; output goes to the log.
-# Shows the latest "Compiling …" crate while cargo works.
+# Overall progress: each step has a weight (roughly its expected seconds).
+TOTAL_W=0   # sum of the weights of every step in the plan; 0 = no progress bar
+DONE_W=0
+
+# How far the running step is, in per mille. Cargo's own unit counter ("Building
+# [==> ] 123/456") is exact; anything else is estimated from the time it usually takes.
+step_progress() {
+    local el=$1 expect=$2 nm p
+    nm=$(tail -c 4000 "$LOG" 2>/dev/null | LC_ALL=C tr '\r' '\n' 2>/dev/null | LC_ALL=C grep -aEo 'Building \[[^]]*\] [0-9]+/[0-9]+' | tail -n 1)
+    nm=${nm##* }
+    if [ -n "$nm" ] && [ "${nm#*/}" -gt 0 ] 2>/dev/null; then
+        # Units are counted equally, but the last one (Spotr itself) is the
+        # biggest, so leave the final stretch of the bar for it.
+        p=$(( ${nm%/*} * 900 / ${nm#*/} ))
+    else
+        p=$(( el * 1000 / (el + expect + 1) ))
+    fi
+    [ "$p" -gt 990 ] && p=990
+    printf '%s' "$p"
+}
+
+# A Spotr-style progress bar: ━━━━━●────── 42%
+bar() {
+    local pm=$1 w=$((W - 12)) on
+    on=$(( pm * w / 1000 ))
+    printf '    %s%s%s%s%s%s%s %s%3d%%%s' "$ACC" "$(repeat "$BAR_ON" "$on")" "$BRIGHT" "$BAR_KNOB" "$MUTED" \
+        "$(repeat "$BAR_OFF" $((w - on)))" "$R" "$B" $((pm / 10)) "$R"
+}
+
+# step WEIGHT "Label" command…   — runs a command with a spinner and the overall
+# progress bar; output goes to the log. Shows the crate cargo is compiling.
 step() {
-    local label="$1"; shift
-    local start=$SECONDS i=0 status detail el room
+    local weight="$1" label="$2"; shift 2
+    local start=$SECONDS i=0 status detail el room p=0 q overall
     room=$((W - $(vlen "$label") - 12))
     "$@" >>"$LOG" 2>&1 &
     local pid=$!
@@ -224,9 +256,15 @@ step() {
         printf '%s' "$HIDE"
         while kill -0 "$pid" 2>/dev/null; do
             el=$((SECONDS - start))
-            detail=$(tail -n 40 "$LOG" 2>/dev/null | grep -Eo '(Compiling|Downloaded|Installing|Unpacking|Setting up|Building) [^ ]+( v[0-9.]+)?' | tail -n 1)
+            detail=$(tail -n 40 "$LOG" 2>/dev/null | LC_ALL=C tr '\r' '\n' 2>/dev/null | LC_ALL=C grep -aEo '(Compiling|Downloaded|Installing|Unpacking|Setting up) [^ ]+( v[0-9.]+)?' | tail -n 1)
             printf '\r%s  %s%s%s %s  %s%s%s' "$CLR" "$ACC" "${SPIN[$((i % ${#SPIN[@]}))]}" "$R" "$label" "$MUTED" "${detail:0:$((room > 0 ? room : 0))}" "$R"
             [ "$el" -ge 5 ] && printf ' %s%ds%s' "$MUTED" "$el" "$R"
+            if [ "$TOTAL_W" -gt 0 ]; then
+                # Never move backwards (estimates hand over to cargo's exact count).
+                q=$(step_progress "$el" "$weight"); [ "$q" -gt "$p" ] && p=$q
+                overall=$(( (DONE_W * 1000 + weight * p) / TOTAL_W ))
+                printf '\n%s%s\e[1A' "$CLR" "$(bar "$overall")"
+            fi
             i=$((i + 1))
             sleep 0.08
         done
@@ -236,22 +274,28 @@ step() {
     fi
     wait "$pid"; status=$?
     el=$((SECONDS - start))
+    DONE_W=$((DONE_W + weight))
     if [ "$status" -eq 0 ]; then
         printf '\r%s  %s%s%s %s' "$CLR" "$GRN" "$OK" "$R" "$label"
         [ "$el" -ge 5 ] && printf ' %s%s %ds%s' "$MUTED" "$DOT" "$el" "$R"
-        printf '\n'
+        printf '\n%s' "$CLR"
+        # Keep the bar under the finished steps until the next one redraws it.
+        [ "$FANCY" = 1 ] && [ "$TOTAL_W" -gt 0 ] && printf '%s\r' "$(bar $(( DONE_W * 1000 / TOTAL_W )))"
     else
-        printf '\r%s  %s%s%s %s\n\n' "$CLR" "$RED" "$FAIL" "$R" "$label"
+        printf '\r%s  %s%s%s %s\n%s\n' "$CLR" "$RED" "$FAIL" "$R" "$label" "$CLR"
         local tail_lines=("")
-        while IFS= read -r l; do tail_lines+=("$MUTED${l:0:$((W - 6))}$R"); done < <(tail -n 12 "$LOG")
+        while IFS= read -r l; do tail_lines+=("$MUTED${l:0:$((W - 6))}$R"); done < <(tail -n 12 "$LOG" | LC_ALL=C tr '\r' '\n' 2>/dev/null | LC_ALL=C grep -av 'Building \[' | tail -n 12)
         box "${RED}Something went wrong$R" "${tail_lines[@]}" "" "Full log: $B$LOG$R"
         echo
         exit 1
     fi
 }
 
+# Clear the progress bar left under the last step.
+end_steps() { [ "$FANCY" = 1 ] && printf '\r%s' "$CLR"; return 0; }
+
 done_line() { printf '  %s%s%s %s\n' "$GRN" "$OK" "$R" "$1"; }
-info_line() { printf '  %s%s%s %s\n' "$ACC" "$NOTE" "$R" "$1"; }
+info_line() { printf '\r%s  %s%s%s %s\n' "$CLR" "$ACC" "$NOTE" "$R" "$1"; }
 warn_line() { printf '  %s!%s %s\n' "$YEL" "$R" "$1"; }
 
 die() { echo; box "${RED}Can't continue$R" "$@"; echo; exit 1; }
@@ -280,13 +324,14 @@ ask() {
 value() { grep -m1 "^$1=" "$MANIFEST" 2>/dev/null | cut -d= -f2-; }
 
 BIN="$HOME/.cargo/bin/spotr"
-PM=""; PKGS=(); RUSTUP=0; CLT=0
+PM=""; PKGS=(); RUSTUP=0; CLT=0; BUILD_CACHE=""
 if [ -f "$MANIFEST" ]; then
     BIN="$(value bin)"; BIN="${BIN:-$HOME/.cargo/bin/spotr}"
     PM="$(value pm)"
     while IFS= read -r p; do PKGS+=("$p"); done < <(grep '^pkg=' "$MANIFEST" | cut -d= -f2-)
     [ "$(value rustup)" = 1 ] && RUSTUP=1
     [ "$(value xcode_clt)" = 1 ] && CLT=1
+    BUILD_CACHE="$(value cache)"
 fi
 if [ "$KEEP_DEPS" = 1 ]; then PKGS=(); RUSTUP=0; CLT=0; fi
 
@@ -314,6 +359,7 @@ if [ "${#PKGS[@]}" -gt 0 ]; then
     plan+=("$RED$FAIL$R System packages the installer added $MUTED($PM)$R")
     plan+=("    $DIM${PKGS[*]}$R")
 fi
+[ -n "$BUILD_CACHE" ] && [ -d "$BUILD_CACHE" ] && plan+=("$RED$FAIL$R Spotr's source and build cache $MUTED($(short "$BUILD_CACHE"))$R")
 [ "$RUSTUP" = 1 ] && plan+=("$RED$FAIL$R Rust $MUTED(rustup, ~/.cargo, ~/.rustup and its PATH setup)$R")
 [ "$CLT" = 1 ] && plan+=("$RED$FAIL$R Xcode Command Line Tools $MUTED(/Library/Developer/CommandLineTools)$R")
 [ -f "$MANIFEST" ] && plan+=("$RED$FAIL$R The install manifest $MUTED(~${MANIFEST#"$HOME"})$R")
@@ -360,20 +406,28 @@ need_sudo() {
 # ──────────────────────────────────────────────────────────────── uninstall
 
 if [ -e "$BIN" ]; then
-    if command -v cargo >/dev/null 2>&1 && cargo install --list 2>/dev/null | grep -q '^spotr '; then
-        step "Removing Spotr" cargo uninstall spotr
+    # Older installers used `cargo install`; let cargo forget it too, but only if
+    # cargo's record is about this very file (CARGO_HOME may point elsewhere).
+    if command -v cargo >/dev/null 2>&1 && [ "${CARGO_HOME:-$HOME/.cargo}/bin/spotr" = "$BIN" ] \
+        && cargo install --list 2>/dev/null | grep -q '^spotr '; then
+        remove_bin() { cargo uninstall spotr; rm -f "$BIN"; }
     else
-        step "Removing Spotr" rm -f "$BIN"
+        remove_bin() { rm -f "$BIN"; }
     fi
+    step 1 "Removing Spotr" remove_bin
+fi
+
+if [ -n "$BUILD_CACHE" ] && [ -d "$BUILD_CACHE" ]; then
+    step 1 "Removing the build cache" rm -rf "$BUILD_CACHE"
 fi
 
 if [ "$PURGE" = 1 ]; then
     rm_data() { rm -rf ${CONFIG_DIR:+"$CONFIG_DIR"} ${CACHE_DIR:+"$CACHE_DIR"}; }
-    step "Deleting your Spotr settings and cache" rm_data
+    step 1 "Deleting your Spotr settings and cache" rm_data
 fi
 
 if [ "$RUSTUP" = 1 ] && command -v rustup >/dev/null 2>&1; then
-    step "Removing Rust" rustup self uninstall -y
+    step 1 "Removing Rust" rustup self uninstall -y
 fi
 
 if [ "${#PKGS[@]}" -gt 0 ]; then
@@ -390,19 +444,19 @@ if [ "${#PKGS[@]}" -gt 0 ]; then
     if [ "${#present[@]}" -gt 0 ]; then
         need_sudo "Removing system packages needs your password."
         case "$PM" in
-            apt)    step "Removing ${present[*]}" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get remove -y "${present[@]}"
-                    step "Removing packages nothing needs anymore" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y ;;
-            dnf)    step "Removing ${present[*]}" $SUDO dnf remove -y "${present[@]}" ;;
-            pacman) step "Removing ${present[*]}" $SUDO pacman -Rns --noconfirm "${present[@]}" ;;
-            zypper) step "Removing ${present[*]}" $SUDO zypper --non-interactive remove --clean-deps "${present[@]}" ;;
-            apk)    step "Removing ${present[*]}" $SUDO apk del "${present[@]}" ;;
+            apt)    step 1 "Removing ${present[*]}" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get remove -y "${present[@]}"
+                    step 1 "Removing packages nothing needs anymore" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y ;;
+            dnf)    step 1 "Removing ${present[*]}" $SUDO dnf remove -y "${present[@]}" ;;
+            pacman) step 1 "Removing ${present[*]}" $SUDO pacman -Rns --noconfirm "${present[@]}" ;;
+            zypper) step 1 "Removing ${present[*]}" $SUDO zypper --non-interactive remove --clean-deps "${present[@]}" ;;
+            apk)    step 1 "Removing ${present[*]}" $SUDO apk del "${present[@]}" ;;
         esac
     fi
 fi
 
 if [ "$CLT" = 1 ] && [ -d /Library/Developer/CommandLineTools ]; then
     need_sudo "Removing the Command Line Tools needs your password."
-    step "Removing the Xcode Command Line Tools" $SUDO rm -rf /Library/Developer/CommandLineTools
+    step 1 "Removing the Xcode Command Line Tools" $SUDO rm -rf /Library/Developer/CommandLineTools
 fi
 
 if [ -f "$MANIFEST" ]; then
@@ -422,7 +476,7 @@ if [ -f "$MANIFEST" ]; then
         done
         return 0
     }
-    step "Cleaning up" remove_manifest
+    step 1 "Cleaning up" remove_manifest
 fi
 rm -f "$LOG"
 

@@ -10,7 +10,10 @@
 
 set -u
 
-REPO_URL="https://github.com/kubos5/spotr.git"
+# Overridable for forks (and for testing the installer).
+REPO_URL="${SPOTR_REPO:-https://github.com/kubos5/spotr.git}"
+BRANCH="${SPOTR_BRANCH:-main}"
+RELEASES="${SPOTR_RELEASES:-https://github.com/kubos5/spotr/releases}"
 MIN_RUST="1.88"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/spotr"
 MANIFEST="$DATA_DIR/install-manifest"
@@ -18,10 +21,12 @@ LOG="$(mktemp "${TMPDIR:-/tmp}/spotr-install.XXXXXX")"
 
 ASSUME_YES=0
 AUDIO=1
+FROM_SOURCE=0
 for arg in "$@"; do
     case "$arg" in
         -y|--yes) ASSUME_YES=1 ;;
         --no-audio) AUDIO=0 ;;
+        --from-source) FROM_SOURCE=1 ;;
         -h|--help)
             cat <<'EOF'
 Spotr installer
@@ -32,6 +37,7 @@ USAGE:
 OPTIONS:
     -y, --yes       Don't ask for confirmation
     --no-audio      Build without the built-in player (no ALSA / audio libraries needed)
+    --from-source   Always compile, even when a prebuilt release is available
     -h, --help      Show this help
 
 Undo everything with ./uninstall.sh
@@ -68,11 +74,13 @@ if [ "$UNI" = 1 ]; then
     OK="✓"; FAIL="✗"; ARROW="❯"; DOT="·"; NOTE="ℹ"; ELL="…"
     SPIN=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
     WAVE=("▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    BAR_ON="━"; BAR_KNOB="●"; BAR_OFF="─"
 else
     TL="+"; TR="+"; BL="+"; BR="+"; H="-"; V="|"
     OK="ok"; FAIL="x"; ARROW=">"; DOT="-"; NOTE="i"; ELL="~"
     SPIN=("|" "/" "-" "\\")
     WAVE=("_" "." "-" "~" "~" "^" "^" "^")
+    BAR_ON="="; BAR_KNOB=">"; BAR_OFF="-"
 fi
 
 COLS=$(tput cols 2>/dev/null || echo 80)
@@ -165,12 +173,13 @@ draw_logo() {
 
 SINE=(4 5 6 7 7 6 5 4 3 2 1 0 0 1 2 3)
 wave() {
-    local t=$1 n=30 i lvl col out="" pad
+    local t=$1 n=32 i lvl col out="" pad
     pad=$(( (COLS - n) / 2 )); [ "$pad" -lt 0 ] && pad=0
     for ((i = 0; i < n; i++)); do
-        lvl=${SINE[$(( (i + t) % ${#SINE[@]} ))]}
+        # Column 0 is one to the left of where the 30-column wave used to start.
+        lvl=${SINE[$(( (i - 1 + t + ${#SINE[@]}) % ${#SINE[@]} ))]}
         if [ "${#PALETTE[@]}" -gt 0 ]; then
-            col=${PALETTE[$(( i % ${#PALETTE[@]} ))]}
+            col=${PALETTE[$(( (i - 1 + ${#PALETTE[@]}) % ${#PALETTE[@]} ))]}
             out+=$'\e['"${col}m${WAVE[$lvl]}"
         else
             out+="${WAVE[$lvl]}"
@@ -210,11 +219,40 @@ banner() {
     echo
 }
 
-# step "Label" command…   — runs a command with a spinner; output goes to the log.
-# Shows the latest "Compiling …" crate while cargo works.
+# Overall progress: each step has a weight (roughly its expected seconds).
+TOTAL_W=0   # sum of the weights of every step in the plan; 0 = no progress bar
+DONE_W=0
+
+# How far the running step is, in per mille. Cargo's own unit counter ("Building
+# [==> ] 123/456") is exact; anything else is estimated from the time it usually takes.
+step_progress() {
+    local el=$1 expect=$2 nm p
+    nm=$(tail -c 4000 "$LOG" 2>/dev/null | LC_ALL=C tr '\r' '\n' 2>/dev/null | LC_ALL=C grep -aEo 'Building \[[^]]*\] [0-9]+/[0-9]+' | tail -n 1)
+    nm=${nm##* }
+    if [ -n "$nm" ] && [ "${nm#*/}" -gt 0 ] 2>/dev/null; then
+        # Units are counted equally, but the last one (Spotr itself) is the
+        # biggest, so leave the final stretch of the bar for it.
+        p=$(( ${nm%/*} * 900 / ${nm#*/} ))
+    else
+        p=$(( el * 1000 / (el + expect + 1) ))
+    fi
+    [ "$p" -gt 990 ] && p=990
+    printf '%s' "$p"
+}
+
+# A Spotr-style progress bar: ━━━━━●────── 42%
+bar() {
+    local pm=$1 w=$((W - 12)) on
+    on=$(( pm * w / 1000 ))
+    printf '    %s%s%s%s%s%s%s %s%3d%%%s' "$ACC" "$(repeat "$BAR_ON" "$on")" "$BRIGHT" "$BAR_KNOB" "$MUTED" \
+        "$(repeat "$BAR_OFF" $((w - on)))" "$R" "$B" $((pm / 10)) "$R"
+}
+
+# step WEIGHT "Label" command…   — runs a command with a spinner and the overall
+# progress bar; output goes to the log. Shows the crate cargo is compiling.
 step() {
-    local label="$1"; shift
-    local start=$SECONDS i=0 status detail el room
+    local weight="$1" label="$2"; shift 2
+    local start=$SECONDS i=0 status detail el room p=0 q overall
     room=$((W - $(vlen "$label") - 12))
     "$@" >>"$LOG" 2>&1 &
     local pid=$!
@@ -222,9 +260,15 @@ step() {
         printf '%s' "$HIDE"
         while kill -0 "$pid" 2>/dev/null; do
             el=$((SECONDS - start))
-            detail=$(tail -n 40 "$LOG" 2>/dev/null | grep -Eo '(Compiling|Downloaded|Installing|Unpacking|Setting up|Building) [^ ]+( v[0-9.]+)?' | tail -n 1)
+            detail=$(tail -n 40 "$LOG" 2>/dev/null | LC_ALL=C tr '\r' '\n' 2>/dev/null | LC_ALL=C grep -aEo '(Compiling|Downloaded|Installing|Unpacking|Setting up) [^ ]+( v[0-9.]+)?' | tail -n 1)
             printf '\r%s  %s%s%s %s  %s%s%s' "$CLR" "$ACC" "${SPIN[$((i % ${#SPIN[@]}))]}" "$R" "$label" "$MUTED" "${detail:0:$((room > 0 ? room : 0))}" "$R"
             [ "$el" -ge 5 ] && printf ' %s%ds%s' "$MUTED" "$el" "$R"
+            if [ "$TOTAL_W" -gt 0 ]; then
+                # Never move backwards (estimates hand over to cargo's exact count).
+                q=$(step_progress "$el" "$weight"); [ "$q" -gt "$p" ] && p=$q
+                overall=$(( (DONE_W * 1000 + weight * p) / TOTAL_W ))
+                printf '\n%s%s\e[1A' "$CLR" "$(bar "$overall")"
+            fi
             i=$((i + 1))
             sleep 0.08
         done
@@ -234,22 +278,28 @@ step() {
     fi
     wait "$pid"; status=$?
     el=$((SECONDS - start))
+    DONE_W=$((DONE_W + weight))
     if [ "$status" -eq 0 ]; then
         printf '\r%s  %s%s%s %s' "$CLR" "$GRN" "$OK" "$R" "$label"
         [ "$el" -ge 5 ] && printf ' %s%s %ds%s' "$MUTED" "$DOT" "$el" "$R"
-        printf '\n'
+        printf '\n%s' "$CLR"
+        # Keep the bar under the finished steps until the next one redraws it.
+        [ "$FANCY" = 1 ] && [ "$TOTAL_W" -gt 0 ] && printf '%s\r' "$(bar $(( DONE_W * 1000 / TOTAL_W )))"
     else
-        printf '\r%s  %s%s%s %s\n\n' "$CLR" "$RED" "$FAIL" "$R" "$label"
+        printf '\r%s  %s%s%s %s\n%s\n' "$CLR" "$RED" "$FAIL" "$R" "$label" "$CLR"
         local tail_lines=("")
-        while IFS= read -r l; do tail_lines+=("$MUTED${l:0:$((W - 6))}$R"); done < <(tail -n 12 "$LOG")
+        while IFS= read -r l; do tail_lines+=("$MUTED${l:0:$((W - 6))}$R"); done < <(tail -n 12 "$LOG" | LC_ALL=C tr '\r' '\n' 2>/dev/null | LC_ALL=C grep -av 'Building \[' | tail -n 12)
         box "${RED}Something went wrong$R" "${tail_lines[@]}" "" "Full log: $B$LOG$R"
         echo
         exit 1
     fi
 }
 
+# Clear the progress bar left under the last step.
+end_steps() { [ "$FANCY" = 1 ] && printf '\r%s' "$CLR"; return 0; }
+
 done_line() { printf '  %s%s%s %s\n' "$GRN" "$OK" "$R" "$1"; }
-info_line() { printf '  %s%s%s %s\n' "$ACC" "$NOTE" "$R" "$1"; }
+info_line() { printf '\r%s  %s%s%s %s\n' "$CLR" "$ACC" "$NOTE" "$R" "$1"; }
 warn_line() { printf '  %s!%s %s\n' "$YEL" "$R" "$1"; }
 
 die() { echo; box "${RED}Can't continue$R" "$@"; echo; exit 1; }
@@ -329,14 +379,53 @@ if command -v cargo >/dev/null 2>&1; then
     fi
 fi
 
-# Source: this clone, or a fresh one in a temporary directory.
+# Source: this clone (built in its own target/ folder), or a checkout kept in a
+# cache folder. Either way, builds are incremental: on later runs (updates), only
+# what changed is compiled again, not all ~400 dependencies.
+if [ "$OS" = "Darwin" ]; then CACHE="$HOME/Library/Caches/spotr-install"; else CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/spotr-install"; fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || echo "")"
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/Cargo.toml" ] && grep -q '^name = "spotr"' "$SCRIPT_DIR/Cargo.toml"; then
-    SRC="$SCRIPT_DIR"; CLONE=0
+    SRC="$SCRIPT_DIR"; CLONE=0; TARGET_DIR="$SRC/target"
 else
-    SRC="$(mktemp -d "${TMPDIR:-/tmp}/spotr-src.XXXXXX")"; CLONE=1
+    SRC="$CACHE/src"; CLONE=1; TARGET_DIR="$CACHE/target"
 fi
 VERSION=$(grep -m1 '^version' "$SRC/Cargo.toml" 2>/dev/null | cut -d'"' -f2)
+WARM=0   # a previous build to reuse
+[ -d "$TARGET_DIR/local/deps" ] && WARM=1
+
+# Prebuilt binaries (from GitHub releases) skip compiling altogether. Used when
+# installing straight from GitHub; a local clone is always built from its source.
+PREBUILT=""
+release_target() {
+    local arch
+    case "$(uname -m)" in
+        arm64|aarch64) arch=aarch64 ;;
+        x86_64|amd64) arch=x86_64 ;;
+        *) return 1 ;;
+    esac
+    case "$OS" in
+        Darwin) echo "$arch-apple-darwin" ;;
+        Linux)
+            if [ "$PM" = "apk" ]; then
+                [ "$arch" = x86_64 ] && echo "x86_64-unknown-linux-musl" || return 1
+            else
+                # The built-in player needs ALSA at runtime.
+                { ldconfig -p 2>/dev/null | grep -q 'libasound\.so\.2'; } || ls /usr/lib*/libasound.so.2 /usr/lib/*/libasound.so.2 >/dev/null 2>&1 || return 1
+                echo "$arch-unknown-linux-gnu"
+            fi ;;
+        *) return 1 ;;
+    esac
+}
+if [ "$CLONE" = 1 ] && [ "$FROM_SOURCE" = 0 ] && [ "$AUDIO" = 1 ] && command -v curl >/dev/null 2>&1 && command -v tar >/dev/null 2>&1; then
+    if TRIPLE=$(release_target); then
+        url="$RELEASES/latest/download/spotr-$TRIPLE.tar.xz"
+        if curl -fsIL --max-time 8 -o /dev/null "$url" 2>/dev/null; then
+            PREBUILT="$url"
+            tag=$(curl -fsIL --max-time 8 -o /dev/null -w '%{url_effective}' "$RELEASES/latest" 2>/dev/null)
+            tag=${tag##*/}; VERSION=${tag#v}
+        fi
+    fi
+fi
 
 PREV_INSTALL=0
 [ -f "$MANIFEST" ] && PREV_INSTALL=1
@@ -354,32 +443,56 @@ if [ "$OS" != "Linux" ] && [ "$OS" != "Darwin" ]; then
     die "This installer supports macOS and Linux." "On Windows, follow the README's \"Compile from source\" steps."
 fi
 
+# Step weights ≈ typical seconds, for the progress bar.
+W_CLT=120; W_APT_UPDATE=10; W_PKGS=30; W_RUST=30; W_RUST_UPDATE=20; W_SRC=5; W_DOWNLOAD=8; W_INSTALL=1
+if [ "$WARM" = 1 ]; then W_BUILD=15; else W_BUILD=120; fi
+
 plan=()
-if [ "$NEED_CLT" = 1 ]; then
-    plan+=("$ACC$ARROW$R Xcode Command Line Tools $MUTED(compiler, git)$R")
-fi
-if [ "${#MISSING[@]}" -gt 0 ]; then
-    plan+=("$ACC$ARROW$R System packages $MUTED($PM)$R")
-    plan+=("    $DIM${MISSING[*]}$R")
-fi
-case "$RUST_STATE" in
-    missing) plan+=("$ACC$ARROW$R Rust $MUTED(via rustup, into ~/.cargo and ~/.rustup)$R") ;;
-    update)  plan+=("$ACC$ARROW$R Update Rust to stable $MUTED(found $have, need $MIN_RUST+)$R") ;;
-esac
-[ "$CLONE" = 1 ] && plan+=("$ACC$ARROW$R Download the source $MUTED(temporary, removed afterwards)$R")
-if [ "$PREV_INSTALL" = 1 ]; then
-    plan+=("$ACC$ARROW$R Rebuild and update Spotr $MUTED(~/.cargo/bin/spotr)$R")
+if [ -n "$PREBUILT" ]; then
+    # Nothing to compile, so no compiler, packages or Rust needed.
+    NEED_CLT=0; MISSING=(); RUST_STATE="skip"
+    plan+=("$ACC$ARROW$R Download Spotr${VERSION:+ $VERSION} $MUTED(prebuilt for $TRIPLE)$R")
+    TOTAL_W=$((W_DOWNLOAD + W_INSTALL))
 else
-    plan+=("$ACC$ARROW$R Build and install Spotr $MUTED(~/.cargo/bin/spotr)$R")
+    TOTAL_W=$((W_BUILD + W_INSTALL))
+    if [ "$NEED_CLT" = 1 ]; then
+        plan+=("$ACC$ARROW$R Xcode Command Line Tools $MUTED(compiler, git)$R")
+        TOTAL_W=$((TOTAL_W + W_CLT))
+    fi
+    if [ "${#MISSING[@]}" -gt 0 ]; then
+        plan+=("$ACC$ARROW$R System packages $MUTED($PM)$R")
+        plan+=("    $DIM${MISSING[*]}$R")
+        TOTAL_W=$((TOTAL_W + W_PKGS))
+        [ "$PM" = apt ] && TOTAL_W=$((TOTAL_W + W_APT_UPDATE))
+    fi
+    case "$RUST_STATE" in
+        missing) plan+=("$ACC$ARROW$R Rust $MUTED(via rustup, into ~/.cargo and ~/.rustup)$R"); TOTAL_W=$((TOTAL_W + W_RUST)) ;;
+        update)  plan+=("$ACC$ARROW$R Update Rust to stable $MUTED(found $have, need $MIN_RUST+)$R"); TOTAL_W=$((TOTAL_W + W_RUST_UPDATE)) ;;
+    esac
+    if [ "$CLONE" = 1 ]; then
+        if [ -d "$SRC/.git" ]; then
+            plan+=("$ACC$ARROW$R Update the source $MUTED(kept in ~${CACHE#"$HOME"})$R")
+        else
+            plan+=("$ACC$ARROW$R Download the source $MUTED(kept, so updates are quick)$R")
+        fi
+        TOTAL_W=$((TOTAL_W + W_SRC))
+    fi
+    verb="Build"; [ "$PREV_INSTALL" = 1 ] && verb="Rebuild"
+    if [ "$WARM" = 1 ]; then
+        plan+=("$ACC$ARROW$R $verb Spotr $MUTED(only what changed is compiled)$R")
+    else
+        plan+=("$ACC$ARROW$R $verb Spotr $MUTED(a few minutes the first time)$R")
+    fi
+    [ "$AUDIO" = 0 ] && plan+=("    ${DIM}without the built-in player (--no-audio)$R")
 fi
-[ "$AUDIO" = 0 ] && plan+=("    ${DIM}without the built-in player (--no-audio)$R")
+plan+=("$ACC$ARROW$R Install it as $MUTED~/.cargo/bin/spotr$R")
 already=()
 [ "$PM" != "xcode" ] && [ "${#PKGS[@]}" -gt "${#MISSING[@]}" ] && already+=("system packages")
 [ "$PM" = "xcode" ] && [ "$NEED_CLT" = 0 ] && already+=("Xcode tools")
 [ "$RUST_STATE" = "ok" ] && already+=("Rust $have")
 
 lines=("${plan[@]}")
-if [ "${#already[@]}" -gt 0 ]; then
+if [ "${#already[@]}" -gt 0 ] && [ -z "$PREBUILT" ]; then
     joined=$(printf "%s, " "${already[@]}"); joined=${joined%, }
     lines+=("" "${MUTED}Already there: $joined$R")
 fi
@@ -387,7 +500,7 @@ lines+=("" "${MUTED}Everything added is recorded, so ${R}./uninstall.sh${MUTED} 
 box "Here's the plan" "${lines[@]}"
 echo
 
-if [ "$RUST_STATE" = "old" ]; then
+if [ "$RUST_STATE" = "old" ] && [ -z "$PREBUILT" ]; then
     die "Found Rust $have, but Spotr needs $MIN_RUST or newer, and rustup isn't installed." \
         "Update Rust with your package manager (or remove it so rustup can be used), then try again."
 fi
@@ -421,7 +534,7 @@ if [ "$NEED_CLT" = 1 ]; then
     xcode-select --install >>"$LOG" 2>&1 || true
     record "xcode_clt=1"
     wait_clt() { until xcode-select -p >/dev/null 2>&1; do sleep 3; done; }
-    step "Waiting for the Command Line Tools" wait_clt
+    step $W_CLT "Waiting for the Command Line Tools" wait_clt
 fi
 
 if [ "${#MISSING[@]}" -gt 0 ]; then
@@ -435,12 +548,12 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
     record "pm=$PM"
     for p in "${MISSING[@]}"; do record "pkg=$p"; done
     case "$PM" in
-        apt)    step "Updating package lists" $SUDO apt-get update
-                step "Installing ${MISSING[*]}" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "${MISSING[@]}" ;;
-        dnf)    step "Installing ${MISSING[*]}" $SUDO dnf install -y "${MISSING[@]}" ;;
-        pacman) step "Installing ${MISSING[*]}" $SUDO pacman -S --needed --noconfirm "${MISSING[@]}" ;;
-        zypper) step "Installing ${MISSING[*]}" $SUDO zypper --non-interactive install "${MISSING[@]}" ;;
-        apk)    step "Installing ${MISSING[*]}" $SUDO apk add "${MISSING[@]}" ;;
+        apt)    step $W_APT_UPDATE "Updating package lists" $SUDO apt-get update
+                step $W_PKGS "Installing ${MISSING[*]}" $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y "${MISSING[@]}" ;;
+        dnf)    step $W_PKGS "Installing ${MISSING[*]}" $SUDO dnf install -y "${MISSING[@]}" ;;
+        pacman) step $W_PKGS "Installing ${MISSING[*]}" $SUDO pacman -S --needed --noconfirm "${MISSING[@]}" ;;
+        zypper) step $W_PKGS "Installing ${MISSING[*]}" $SUDO zypper --non-interactive install "${MISSING[@]}" ;;
+        apk)    step $W_PKGS "Installing ${MISSING[*]}" $SUDO apk add "${MISSING[@]}" ;;
     esac
 fi
 
@@ -454,36 +567,90 @@ case "$RUST_STATE" in
         for f in .profile .bash_profile .bashrc .zshenv .zshrc .tcshrc .config/fish/conf.d/rustup.fish; do
             [ -e "$HOME/$f" ] || record "file=$HOME/$f"
         done
-        step "Installing Rust" install_rustup
+        step $W_RUST "Installing Rust" install_rustup
         . "$HOME/.cargo/env" ;;
     update)
-        step "Updating Rust" rustup update stable
+        step $W_RUST_UPDATE "Updating Rust" rustup update stable
         rustup default stable >>"$LOG" 2>&1 ;;
 esac
 
-if [ "$CLONE" = 1 ]; then
-    step "Downloading Spotr" git clone --depth 1 "$REPO_URL" "$SRC"
-    VERSION=$(grep -m1 '^version' "$SRC/Cargo.toml" | cut -d'"' -f2)
+# mkdir -p that records each directory it creates (deepest first), for uninstall.
+make_dir() {
+    local d="$1" made=()
+    while [ ! -d "$d" ]; do made+=("$d"); d="$(dirname "$d")"; done
+    mkdir -p "$1" || return 1
+    for d in ${made[@]+"${made[@]}"}; do record "dir=$d"; done
+}
+
+BIN_DIR="$HOME/.cargo/bin"
+make_dir "$BIN_DIR"
+record "bin=$BIN_DIR/spotr"
+
+if [ -n "$PREBUILT" ]; then
+    DL="$(mktemp -d "${TMPDIR:-/tmp}/spotr-dl.XXXXXX")"
+    fetch_release() {
+        curl -fsSL "$PREBUILT" -o "$DL/spotr.tar.xz" || return 1
+        # Check the archive against the checksum published with the release.
+        if curl -fsSL "$PREBUILT.sha256" -o "$DL/sum" 2>/dev/null; then
+            local want got
+            want=$(awk '{print $1}' "$DL/sum")
+            got=$( (shasum -a 256 "$DL/spotr.tar.xz" 2>/dev/null || sha256sum "$DL/spotr.tar.xz") | awk '{print $1}')
+            [ "$want" = "$got" ] || { echo "checksum mismatch: expected $want, got $got"; return 1; }
+        fi
+        tar -xJf "$DL/spotr.tar.xz" -C "$DL"
+    }
+    step $W_DOWNLOAD "Downloading Spotr${VERSION:+ $VERSION}" fetch_release
+    BUILT="$(find "$DL" -type f -name spotr -perm -u+x | head -n 1)"
+    [ -n "$BUILT" ] || die "The release archive didn't contain a spotr binary." "Run again with $B--from-source$R to compile it instead."
+    VERSION=$("$BUILT" --version 2>/dev/null | awk '{print $2}')
+else
+    if [ "$CLONE" = 1 ]; then
+        make_dir "$CACHE" && record "cache=$CACHE"
+        if [ -d "$SRC/.git" ]; then
+            update_src() { git -C "$SRC" fetch --depth 1 origin "$BRANCH" && git -C "$SRC" reset --hard FETCH_HEAD; }
+            step $W_SRC "Updating the source" update_src
+        else
+            step $W_SRC "Downloading the source" git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$SRC"
+        fi
+        VERSION=$(grep -m1 '^version' "$SRC/Cargo.toml" | cut -d'"' -f2)
+    fi
+
+    features=()
+    [ "$AUDIO" = 0 ] && features=(--no-default-features)
+    # `cargo build` into a kept target folder (instead of `cargo install`, which
+    # starts from scratch every time), with the quick-to-rebuild `local` profile
+    # (see Cargo.toml) and cargo's progress counter in the log.
+    build() {
+        cd "$SRC" && CARGO_TERM_PROGRESS_WHEN=always CARGO_TERM_PROGRESS_WIDTH=100 \
+            cargo build --profile local --locked --target-dir "$TARGET_DIR" ${features[@]+"${features[@]}"}
+    }
+    step $W_BUILD "Building Spotr${VERSION:+ $VERSION}" build
+    BUILT="$TARGET_DIR/local/spotr"
 fi
 
-features=()
-[ "$AUDIO" = 0 ] && features=(--no-default-features)
-record "bin=$HOME/.cargo/bin/spotr"
-step "Building Spotr${VERSION:+ $VERSION} $MUTED(this takes a few minutes)$R" \
-    cargo install --path "$SRC" --locked --force ${features[@]+"${features[@]}"}
+# Copy to a temporary name first, so a running Spotr isn't disturbed mid-copy.
+place() { cp "$BUILT" "$BIN_DIR/.spotr.new" && chmod 755 "$BIN_DIR/.spotr.new" && mv -f "$BIN_DIR/.spotr.new" "$BIN_DIR/spotr"; }
+step $W_INSTALL "Installing to ~${BIN_DIR#"$HOME"}/spotr" place
+end_steps
 
-[ "$CLONE" = 1 ] && rm -rf "$SRC"
+[ -n "$PREBUILT" ] && rm -rf "$DL"
 rm -f "$LOG"
 
 # ─────────────────────────────────────────────────────────────────── done
 
 echo
 final=("${GRN}${OK}${R} ${B}Spotr${VERSION:+ $VERSION} is installed.$R" "")
-if command -v spotr >/dev/null 2>&1 && [ "$(command -v spotr)" = "$HOME/.cargo/bin/spotr" ] && [ "$RUST_STATE" != "missing" ]; then
+case ":$PATH:" in *":$BIN_DIR:"*) on_path=1 ;; *) on_path=0 ;; esac
+if [ "$on_path" = 1 ] && [ "$RUST_STATE" != "missing" ]; then
     final+=("Start it with  ${KEY} spotr $R")
-else
+elif [ "$RUST_STATE" = "missing" ]; then
+    # rustup added ~/.cargo/bin to the shell profiles.
     final+=("Open a new terminal, then start it with  ${KEY} spotr $R")
     final+=("${MUTED}(or right now: ${R}~/.cargo/bin/spotr${MUTED})$R")
+else
+    final+=("Start it with  ${KEY} ~/.cargo/bin/spotr $R")
+    final+=("" "${MUTED}To type just ${R}spotr${MUTED}, add this to your shell's profile:$R")
+    final+=("  export PATH=\"\$HOME/.cargo/bin:\$PATH\"")
 fi
 final+=("" "${MUTED}Just looking? Try ${R}spotr --demo${MUTED} — no account needed.$R")
 final+=("${MUTED}Changed your mind? ${R}./uninstall.sh${MUTED} undoes all of this.$R")

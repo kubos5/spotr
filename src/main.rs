@@ -163,10 +163,10 @@ where
 }
 
 fn main() -> Result<()> {
-    // Several rustls crypto backends are compiled in (reqwest uses aws-lc-rs,
-    // librespot uses ring); without an explicit choice rustls panics the first
-    // time librespot opens a TLS connection.
-    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    // Everything uses rustls with ring (reqwest is built without a provider of
+    // its own, which keeps the slow-to-compile aws-lc out of the build). Install
+    // it as the process default before any client is created.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     term::install_panic_hook();
     let Some(args) = parse_args() else { return Ok(()) };
     let paths = Paths::new();
