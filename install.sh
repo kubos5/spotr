@@ -415,13 +415,11 @@ release_target() {
     case "$OS" in
         Darwin) echo "$arch-apple-darwin" ;;
         Linux)
-            if [ "$PM" = "apk" ]; then
-                [ "$arch" = x86_64 ] && echo "x86_64-unknown-linux-musl" || return 1
-            else
-                # The built-in player needs ALSA at runtime.
-                { ldconfig -p 2>/dev/null | grep -q 'libasound\.so\.2'; } || ls /usr/lib*/libasound.so.2 /usr/lib/*/libasound.so.2 >/dev/null 2>&1 || return 1
-                echo "$arch-unknown-linux-gnu"
-            fi ;;
+            # Releases are glibc builds; Alpine (musl) compiles from source.
+            [ "$PM" = "apk" ] && return 1
+            # The built-in player needs ALSA at runtime.
+            { ldconfig -p 2>/dev/null | grep -q 'libasound\.so\.2'; } || ls /usr/lib*/libasound.so.2 /usr/lib/*/libasound.so.2 >/dev/null 2>&1 || return 1
+            echo "$arch-unknown-linux-gnu" ;;
         *) return 1 ;;
     esac
 }
