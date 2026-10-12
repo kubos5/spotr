@@ -4,6 +4,13 @@
 
 <img width="1941" height="1276" alt="CleanShot 2026-10-10 at 16 41 55@2x" src="https://github.com/user-attachments/assets/6c158526-368d-4460-9d58-be2aa75acd12" />
 
+> [!TIP]
+> **Install** (macOS & Linux)
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
+> ```
+> See [more options](#installation)
+
 Spotr is a super lightweight, blazingly fast and keyboard-first Spotify client, built in Rust.
 It features polished animations throughout the UI, so that every action feels super satisfying.
 
@@ -76,45 +83,41 @@ _Optional:_
 
 ## Installation
 
-### Option 1: Using the install script (recommended)
+Custom installer (macOS & Linux)
 
-> [!NOTE]
-> The install script only works on Linux and macOS.
-> If you're on Windows, you can [compile from source](#option-3-compile-manually)
-
-Simply run:
-```bash
-curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
-```
-
-Uninstall:
-```bash
-curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/uninstall.sh | bash
-```
-
-When a prebuilt release exists for your system, the script just downloads it (seconds, no compiler or Rust needed). Otherwise it compiles Spotr, which takes a minute or two the first time. The build is kept, so running the script again to update only recompiles what changed. Add `--from-source` to always compile, or `--no-audio` to build without the built-in player.
+> [!TIP]
+> **Recommended**
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
+> ```
 
 ---
 
-### Option 2: Using Homebrew
+Homebrew (macOS & Linux)
 
-Simply run:
 ```bash
 brew install kubos5/tap/spotr
 ```
 
-Uninstall:
-```bash
-brew uninstall spotr
-```
+---
 
-> [!NOTE]
-> For now, Spotr is only available on Homebrew.
-> I'm planning on distributing Spotr through the [AUR](https://aur.archlinux.org/), [WinGet](https://learn.microsoft.com/en-us/windows/package-manager/winget/), and more. Stay tuned!
+PowerShell (Windows)
+
+```sh
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/kubos5/spotr/releases/download/v0.1.2/spotr-installer.ps1 | iex"
+```
 
 ---
 
-### Option 3: Compile manually
+Shell script
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kubos5/spotr/releases/download/v0.1.2/spotr-installer.sh | sh
+```
+
+---
+
+Compile manually
 
 ```bash
 git clone https://github.com/kubos5/spotr.git
@@ -132,12 +135,9 @@ Rebuilding after `git pull` takes most of a minute with the fully optimized `rel
 cargo install --path . --locked --profile local
 ```
 
-> [!NOTE]
-> The [install script](#option-1-using-the-install-script-recommended) does all of this for you. Consider using that!
-
 ---
 
-#### To build without installing:
+Build without installing:
 
 ```bash
 cargo build --release
@@ -147,7 +147,7 @@ The binary is then `target/release/spotr`.
 
 ---
 
-#### Compiling without audio features
+Build without audio features
 
 > [!WARNING]
 > **This probably isn't for you.**
