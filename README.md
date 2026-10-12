@@ -9,7 +9,7 @@
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
 > ```
-> See [more options](#installation)
+> See [more options](#installation) (including Windows and Homebrew)
 
 Spotr is a super lightweight, blazingly fast and keyboard-first Spotify client, built in Rust.
 It features polished animations throughout the UI, so that every action feels super satisfying.
