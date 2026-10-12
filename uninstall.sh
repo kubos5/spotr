@@ -79,9 +79,16 @@ else
     BAR_ON="="; BAR_KNOB=">"; BAR_OFF="-"
 fi
 
-COLS=$(tput cols 2>/dev/null || echo 80)
+# Terminal width. Ask the terminal itself: `tput` falls back to 80 when its
+# output isn't the terminal (as inside $(…) with stderr silenced).
+COLS=$( { stty size </dev/tty; } 2>/dev/null | awk '{print $2}')
+case "$COLS" in ''|*[!0-9]*|0) COLS=$(tput cols 2>/dev/tty || echo 80) ;; esac
+case "$COLS" in ''|*[!0-9]*|0) COLS=80 ;; esac
 [ "$COLS" -gt 76 ] && W=76 || W=$((COLS - 2))
 [ "$W" -lt 40 ] && W=40
+# The banner is centered over the content (the panels below it), not the whole
+# terminal, so on a wide terminal it stays above the text instead of drifting right.
+SPAN=$((W + 4)); [ "$SPAN" -gt "$COLS" ] && SPAN=$COLS
 
 restore() { printf '%s' "$SHOW"; stty echo 2>/dev/null </dev/tty || true; }
 trap restore EXIT
@@ -118,7 +125,7 @@ fit() {
 repeat() { local i; for ((i = 0; i < $2; i++)); do printf '%s' "$1"; done; }
 
 center() {
-    local pad=$(( (COLS - $(vlen "$1")) / 2 ))
+    local pad=$(( (SPAN - $(vlen "$1")) / 2 ))
     [ "$pad" -lt 0 ] && pad=0
     printf '%*s%s\n' "$pad" "" "$1"
 }
@@ -151,7 +158,7 @@ TAGLINE="a better Spotify client, for the terminal"
 # The logo with a shimmer band sweeping across it (Spotr's title shimmer).
 draw_logo() {
     local band=$1 row line i ch out pad
-    pad=$(( (COLS - 35) / 2 )); [ "$pad" -lt 0 ] && pad=0
+    pad=$(( (SPAN - 35) / 2 )); [ "$pad" -lt 0 ] && pad=0
     for row in 0 1 2; do
         line="${LOGO[$row]}"
         out=""
@@ -170,12 +177,14 @@ draw_logo() {
 SINE=(4 5 6 7 7 6 5 4 3 2 1 0 0 1 2 3)
 wave() {
     local t=$1 n=32 i lvl col out="" pad
-    pad=$(( (COLS - n) / 2 )); [ "$pad" -lt 0 ] && pad=0
+    # Centered under the logo: anchored to it rather than to the screen, so it
+    # stays put whether the terminal width is odd or even. The logo is 35 wide
+    # (its top row 34); the wave leaves one column on each side of the top row.
+    pad=$(( (SPAN - 35) / 2 + 1 )); [ "$pad" -lt 0 ] && pad=0
     for ((i = 0; i < n; i++)); do
-        # Column 0 is one to the left of where the 30-column wave used to start.
-        lvl=${SINE[$(( (i - 1 + t + ${#SINE[@]}) % ${#SINE[@]} ))]}
+        lvl=${SINE[$(( (i + t) % ${#SINE[@]} ))]}
         if [ "${#PALETTE[@]}" -gt 0 ]; then
-            col=${PALETTE[$(( (i - 1 + ${#PALETTE[@]}) % ${#PALETTE[@]} ))]}
+            col=${PALETTE[$(( i % ${#PALETTE[@]} ))]}
             out+=$'\e['"${col}m${WAVE[$lvl]}"
         else
             out+="${WAVE[$lvl]}"
@@ -191,7 +200,7 @@ banner() {
         if [ "$FANCY" = 1 ]; then
             printf '%s' "$HIDE"
             n=${#TAGLINE}
-            pad=$(( (COLS - n) / 2 )); [ "$pad" -lt 0 ] && pad=0
+            pad=$(( (SPAN - n) / 2 )); [ "$pad" -lt 0 ] && pad=0
             # Shimmer + typewriter tagline + rippling wave, then settle.
             for ((f = 0; f <= 44; f++)); do
                 draw_logo $((f - 4))
