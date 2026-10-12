@@ -2,7 +2,7 @@
 name = "spotr"
 version = "0.1.2"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "Spotr: A better Spotify client, for the terminal"
 license = "GPL-3.0-or-later"
 readme = "README.md"

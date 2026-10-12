@@ -61,7 +61,7 @@ _Mandatory:_
 - access to the Spotify Developer Console
 
 _For compiling:_
-- Rust 1.88+
+- Rust 1.90+
 - a C compiler
 
 _On Linux:_

@@ -14,7 +14,7 @@ set -u
 REPO_URL="${SPOTR_REPO:-https://github.com/kubos5/spotr.git}"
 BRANCH="${SPOTR_BRANCH:-main}"
 RELEASES="${SPOTR_RELEASES:-https://github.com/kubos5/spotr/releases}"
-MIN_RUST="1.88"
+MIN_RUST="1.90"
 DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/spotr"
 MANIFEST="$DATA_DIR/install-manifest"
 LOG="$(mktemp "${TMPDIR:-/tmp}/spotr-install.XXXXXX")"
