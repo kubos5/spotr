@@ -34,10 +34,11 @@ open = "5.4"
 rand = "0.10"
 ratatui = "0.30"
 ratatui-image = { version = "11.1", default-features = false, features = ["crossterm"] }
-reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls", "http2", "charset"] }
-# Both reqwest (aws-lc-rs) and librespot (ring) pull in rustls backends; we pick
-# one explicitly at startup, otherwise rustls panics when librespot connects.
-rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "form", "query", "rustls-no-provider", "http2", "charset"] }
+# One rustls crypto backend for everything: ring, which librespot already uses.
+# reqwest gets no provider of its own (so aws-lc, slow to compile, isn't built);
+# main() installs ring as the process default.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.11"
@@ -57,6 +58,16 @@ souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Used by install.sh: dependencies are still fully optimized (and cached between
+# installs), but there's no LTO and Spotr's own crate is compiled in parallel, so
+# rebuilding after an update takes seconds instead of most of a minute.
+[profile.local]
+inherits = "release"
+lto = false
+
+[profile.local.package.spotr]
+codegen-units = 16
 
 # The profile that 'dist' will build with
 [profile.dist]

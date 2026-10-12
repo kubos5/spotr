@@ -92,6 +92,8 @@ Uninstall:
 curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/uninstall.sh | bash
 ```
 
+When a prebuilt release exists for your system, the script just downloads it (seconds, no compiler or Rust needed). Otherwise it compiles Spotr, which takes a minute or two the first time. The build is kept, so running the script again to update only recompiles what changed. Add `--from-source` to always compile, or `--no-audio` to build without the built-in player.
+
 ---
 
 ### Option 2: Using Homebrew
@@ -124,8 +126,14 @@ This puts the binary in `~/.cargo/bin`.
 
 `--locked`: `Cargo.lock` pins a build-time dependency of librespot (`vergen` 9.0.x), because a newer one breaks librespot's build script. 
 
+Rebuilding after `git pull` takes most of a minute with the fully optimized `release` profile. `--profile local` (what the install script uses) skips link-time optimization, so updates take seconds:
+
+```bash
+cargo install --path . --locked --profile local
+```
+
 > [!NOTE]
-> This is what the [install script](#option-1-using-the-install-script-recommended) already does. Consider using that!
+> The [install script](#option-1-using-the-install-script-recommended) does all of this for you. Consider using that!
 
 ---
 
