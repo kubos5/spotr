@@ -44,8 +44,10 @@ pub fn help(app: &mut App, buf: &mut Buffer, area: Rect) {
         ("⏎", "Play song / open album, artist, playlist"),
         ("⌫ / Esc", "Back to the previous page / close"),
         ("Tab", "Search: next filter · Settings: next tab · Command bar: complete"),
+        ("Tab (queue)", "Switch between Spotr's queue and Spotify's queue"),
+        ("Tab (library)", "Local library: Songs · Albums · Artists · Liked · Playlists · Recent"),
         ("⇧↑ ⇧↓", "Queue: move the selected song"),
-        ("Del", "Queue: remove the selected song"),
+        ("Del", "Queue: remove the selected song · local playlist: remove it from the playlist"),
         ("Ctrl+W  Ctrl+U  Alt+←→", "Text fields: delete word / line, jump words"),
     ];
     lines.push((String::new(), String::new(), false));
@@ -206,8 +208,56 @@ pub fn settings(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Option
     put(buf, inner.x + 2, inner.bottom() - 1, &ellipsize(foot, inner.width.saturating_sub(4) as usize), th.muted(), inner.width);
 }
 
+/// "Set up this folder as a library?"
+pub fn init(app: &mut App, buf: &mut Buffer, area: Rect) {
+    let Some(p) = app.init_prompt.as_ref() else { return };
+    let (dir, warning, choice) = (p.dir.clone(), p.warning.clone(), p.choice);
+    let font = app.title_font();
+    let font = if crate::font::lines_for(font) <= 3 { font } else { crate::font::SLIM };
+    let th_h = crate::font::lines_for(font).max(1);
+    // Borders, padding, title, path, text, buttons and footer.
+    let h = 12 + th_h + if warning.is_some() { 2 } else { 0 };
+    let r = modal_area(area, 80, h, app);
+    let inner = popup(app, buf, r, "Set up a local library");
+    let th = app.theme.clone();
+    let x = inner.x + 3;
+    let w = inner.width.saturating_sub(6);
+    let mut y = inner.y + 1;
+    let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| dir.display().to_string());
+    y += big_title(app, buf, Rect { x, y, width: w, height: th_h }, &name, app.view_changed_at, false, font).max(1);
+    put(buf, x, y, &ellipsize_start(&dir.display().to_string(), w as usize), th.dim(), w);
+    y += 2;
+    for line in [
+        "Spotr will play the music files in this folder and its subfolders,",
+        "and keep your likes, playlists and history in a .spotr folder here.",
+        "Your music files are never changed.",
+    ] {
+        put(buf, x, y, &ellipsize(line, w as usize), Style::new(), w);
+        y += 1;
+    }
+    if let Some(warn) = &warning {
+        y += 1;
+        let icon = if th.unicode { "⚠" } else { "!" };
+        put(buf, x, y, &ellipsize(&format!("{icon} {warn}"), w as usize), th.warn().add_modifier(Modifier::BOLD), w);
+        y += 1;
+    }
+    y += 1;
+    let first = if warning.is_some() { "Set up anyway" } else { "Set up library" };
+    let mut bx = x;
+    for (i, label) in [first, "Cancel"].iter().enumerate() {
+        let text = format!("  {label}  ");
+        let bw = width(&text);
+        let style = if i == choice { th.selected() } else { th.dim() };
+        put(buf, bx, y, &text, style, bw);
+        app.clicks.push((Rect { x: bx, y, width: bw, height: 1 }, Click::InitChoice(i)));
+        bx += bw + 3;
+    }
+    let foot = if th.unicode { "⏎ confirm · ←→ choose · Esc cancel" } else { "Enter confirm - Left/Right choose - Esc cancel" };
+    put(buf, x, inner.bottom().saturating_sub(1), foot, th.muted(), w);
+}
+
 pub fn about(app: &mut App, buf: &mut Buffer, area: Rect) {
-    let r = modal_area(area, 76, 24, app);
+    let r = modal_area(area, 76, 25, app);
     let inner = popup(app, buf, r, "About");
     let th = app.theme.clone();
     let mut y = inner.y + 1;
@@ -227,6 +277,17 @@ pub fn about(app: &mut App, buf: &mut Buffer, area: Rect) {
         (format!("account      {}", app.user.as_ref().map(|u| format!("{} ({})", u.name(), u.product.as_deref().unwrap_or("?"))).unwrap_or_else(|| "not signed in".into())), Style::new()),
         (format!("graphics     {}", app.images.protocol_name()), Style::new()),
         (format!("player       {player}"), Style::new()),
+        (
+            format!(
+                "mode         {}",
+                match &app.offline {
+                    Some(o) => format!("local library “{}”", o.name),
+                    None if app.spotify.has_internal() => "Spotify (Spotify's own search & radio)".into(),
+                    None => "Spotify (Web API search)".into(),
+                }
+            ),
+            Style::new(),
+        ),
         (format!("config       {}", app.paths.config_file().display()), Style::new()),
         (String::new(), Style::new()),
         ("Free software under the GNU GPL v3 (or later).".into(), th.dim()),
@@ -252,12 +313,18 @@ pub fn devices(app: &mut App, buf: &mut Buffer, area: Rect) {
     let mut y = inner.y + 1;
     let x = inner.x + 2;
     let w = inner.width.saturating_sub(4);
-    put(buf, x, y, "Play on", th.bold().add_modifier(Modifier::UNDERLINED), w);
-    if app.devices.loading && app.devices.list.is_empty() {
+    if app.offline.is_some() {
+        put(buf, x, y, "Local library: playing on this computer", th.dim(), w);
+    } else {
+        put(buf, x, y, "Play on", th.bold().add_modifier(Modifier::UNDERLINED), w);
+    }
+    if app.offline.is_some() {
+        // No Spotify devices here; only where the sound goes.
+    } else if app.devices.loading && app.devices.list.is_empty() {
         put(buf, x + 10, y, &format!("{} looking for devices", th.spinner(app.frame)), th.dim(), w);
     }
     y += 1;
-    if app.devices.list.is_empty() && !app.devices.loading {
+    if app.devices.list.is_empty() && !app.devices.loading && app.offline.is_none() {
         put(buf, x + 1, y, "No devices — open Spotify somewhere, or enable the built-in player", th.dim(), w);
         y += 1;
     }
@@ -293,7 +360,8 @@ pub fn devices(app: &mut App, buf: &mut Buffer, area: Rect) {
     }
     if !app.devices.outputs.is_empty() && y + 2 < inner.bottom() {
         y += 1;
-        put(buf, x, y, "Built-in player output", th.bold().add_modifier(Modifier::UNDERLINED), w);
+        let label = if app.offline.is_some() { "Audio output" } else { "Built-in player output" };
+        put(buf, x, y, label, th.bold().add_modifier(Modifier::UNDERLINED), w);
         y += 1;
         let current = app.cfg.general.audio_device.clone();
         for (j, name) in app.devices.outputs.clone().iter().enumerate() {

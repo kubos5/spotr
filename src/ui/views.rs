@@ -251,11 +251,28 @@ fn ascii_lyrics(
 pub fn queue(app: &mut App, buf: &mut Buffer, area: Rect) {
     let area = Rect { x: area.x + 1, y: area.y + 1, width: area.width.saturating_sub(2), height: area.height.saturating_sub(1) };
     let used = header(app, buf, area, Icon::Queue, "Queue");
-    let mut y = area.y + used + 1;
+    let mut y = area.y + used;
     let th = app.theme.clone();
     let bottom = area.bottom().saturating_sub(1);
     let x = area.x + 2;
     let w = area.width.saturating_sub(4);
+    let spotify = app.spotify_queue();
+
+    // Who manages "up next": a two-way switch.
+    if app.offline.is_some() {
+        put(buf, x, y, "Spotr queue · local library", th.dim(), w);
+    } else {
+        let mut cx = x;
+        for (label, on, cmd) in [(" Spotr queue ", !spotify, "queue mode spotr"), (" Spotify queue ", spotify, "queue mode spotify")] {
+            let lw = width(label);
+            put(buf, cx, y, label, if on { th.selected() } else { th.dim() }, lw);
+            app.clicks.push((Rect { x: cx, y, width: lw, height: 1 }, Click::Run(cmd)));
+            cx += lw + 1;
+        }
+        let about = if spotify { "Spotify picks what's next · Tab switches" } else { "your own order · Tab switches" };
+        put(buf, cx + 2, y, &ellipsize(about, (x + w).saturating_sub(cx + 2) as usize), th.muted(), (x + w).saturating_sub(cx + 2));
+    }
+    y += 2;
 
     let section = |buf: &mut Buffer, y: u16, label: &str| {
         put(buf, x, y, label, th.bold().add_modifier(Modifier::UNDERLINED), w);
@@ -269,6 +286,13 @@ pub fn queue(app: &mut App, buf: &mut Buffer, area: Rect) {
         y += 2;
     }
 
+    if spotify {
+        spotify_list(app, buf, Rect { x, y, width: w, height: bottom.saturating_sub(y) });
+        let help = if th.unicode { "↑↓ select · ⏎ skip to it · Tab Spotr queue · Ctrl+A adds songs" } else { "Up/Down select - Enter skip to it - Tab Spotr queue" };
+        put(buf, x, area.bottom().saturating_sub(1), &ellipsize(help, w as usize), th.muted(), w);
+        return;
+    }
+
     if let Some(c) = app.queue.committed.clone() {
         put(buf, x + 1, y, &ellipsize(&format!("→ {} — {}   (up next)", c.name, c.artist_names()), w as usize - 1), th.accent(), w);
         y += 1;
@@ -276,7 +300,12 @@ pub fn queue(app: &mut App, buf: &mut Buffer, area: Rect) {
     section(buf, y, &format!("Next in your queue ({})", app.queue.items.len()));
     y += 1;
     if app.queue.items.is_empty() {
-        put(buf, x + 1, y, "Empty — add songs with Ctrl+A in search, or `queue add <song>`", th.dim(), w);
+        let hint = if app.offline.is_some() {
+            "Empty — Ctrl+A on a song, or `queue add <song>`"
+        } else {
+            "Empty — add songs with Ctrl+A in search, or `queue add <song>`"
+        };
+        put(buf, x + 1, y, hint, th.dim(), w);
         y += 2;
     } else {
         let n = app.queue.items.len();
@@ -295,27 +324,21 @@ pub fn queue(app: &mut App, buf: &mut Buffer, area: Rect) {
                 break;
             }
             let selected = i == sel;
-            let rect = Rect { x, y, width: w, height: 1 };
-            let style = if selected { th.selected() } else { Style::new() };
-            if selected {
-                fill(buf, rect, style);
-            }
             let just_moved = selected && app.queue.list.moved_at.map(|m| app.motion.active(m, 250)).unwrap_or(false);
-            let num = format!("{:>3}", i + 1);
-            put(buf, x, y, &num, if selected { style } else { th.muted() }, 4);
-            let dur = fmt_duration(t.duration_ms);
-            let text = format!("{} — {}", t.name, t.artist_names());
-            let tx = x + 5 + if just_moved { 1 } else { 0 };
-            put(buf, tx, y, &ellipsize(&text, w.saturating_sub(12) as usize), if selected { style } else { th.bold() }, w.saturating_sub(12));
-            put(buf, (x + w).saturating_sub(width(&dur) + 1), y, &dur, if selected { style } else { th.dim() }, 6);
-            app.clicks.push((rect, Click::QueueRow(i)));
+            track_row(app, buf, Rect { x, y, width: w, height: 1 }, i, t, selected, just_moved);
+            app.clicks.push((Rect { x, y, width: w, height: 1 }, Click::QueueRow(i)));
             y += 1;
         }
         y += 1;
     }
 
     if !app.queue.spotify.is_empty() && y + 2 < bottom {
-        section(buf, y, "Then, from Spotify");
+        let label = match app.offline.as_ref() {
+            Some(o) if !o.ctx_label.is_empty() => format!("Then, from “{}”", o.ctx_label),
+            Some(_) => "Then".to_string(),
+            None => "Then, from Spotify".to_string(),
+        };
+        section(buf, y, &label);
         y += 1;
         for t in app.queue.spotify.iter().take((bottom - y) as usize) {
             put(buf, x + 1, y, &ellipsize(&format!("{} — {}", t.name, t.artist_names()), w as usize - 1), th.dim(), w);
@@ -323,9 +346,71 @@ pub fn queue(app: &mut App, buf: &mut Buffer, area: Rect) {
         }
     }
     let help = if th.unicode {
-        "↑↓ select · ⇧↑↓ move · Del remove · ⏎ play now · `queue clear`"
+        if app.offline.is_some() {
+            "↑↓ select · ⇧↑↓ move · Del remove · ⏎ play now · `queue clear`"
+        } else {
+            "↑↓ select · ⇧↑↓ move · Del remove · ⏎ play now · Tab Spotify queue"
+        }
     } else {
         "Up/Down select - Shift+Up/Down move - Del remove - Enter play now"
     };
     put(buf, x, area.bottom().saturating_sub(1), &ellipsize(help, w as usize), th.muted(), w);
+}
+
+/// One numbered song row in a queue list.
+fn track_row(app: &App, buf: &mut Buffer, rect: Rect, i: usize, t: &crate::spotify::models::Track, selected: bool, nudged: bool) {
+    let th = &app.theme;
+    let style = if selected { th.selected() } else { Style::new() };
+    if selected {
+        fill(buf, rect, style);
+    }
+    let (x, w, y) = (rect.x, rect.width, rect.y);
+    put(buf, x, y, &format!("{:>3}", i + 1), if selected { style } else { th.muted() }, 4);
+    let dur = fmt_duration(t.duration_ms);
+    let text = format!("{} — {}", t.name, t.artist_names());
+    let tx = x + 5 + if nudged { 1 } else { 0 };
+    put(buf, tx, y, &ellipsize(&text, w.saturating_sub(12) as usize), if selected { style } else { th.bold() }, w.saturating_sub(12));
+    put(buf, (x + w).saturating_sub(width(&dur) + 1), y, &dur, if selected { style } else { th.dim() }, 6);
+}
+
+/// Spotify's own queue (songs you added, then the album / playlist / radio).
+fn spotify_list(app: &mut App, buf: &mut Buffer, area: Rect) {
+    let th = app.theme.clone();
+    let (x, w) = (area.x, area.width);
+    let mut y = area.y;
+    let playing_radio = app.radio.as_ref().filter(|r| app.pb.track.as_ref().is_some_and(|t| r.uris.contains(&t.uri))).map(|r| r.name.clone());
+    let title = match playing_radio {
+        Some(name) => format!("Up next · Spotify radio for “{name}”"),
+        None => format!("Up next on Spotify ({})", app.queue.spotify.len()),
+    };
+    put(buf, x, y, &title, th.bold().add_modifier(Modifier::UNDERLINED), w);
+    y += 1;
+    if app.queue.spotify.is_empty() {
+        let msg = if app.queue.fetched.is_none() {
+            format!("{} asking Spotify…", th.spinner(app.frame))
+        } else {
+            "Nothing queued — Ctrl+A on a song adds it to Spotify's queue".into()
+        };
+        put(buf, x + 1, y, &msg, th.dim(), w);
+        return;
+    }
+    let n = app.queue.spotify.len();
+    let room = area.height.saturating_sub(2).max(1) as usize;
+    let sel = app.queue.list.selected.min(n - 1);
+    let mut off = app.queue.list.offset;
+    if sel < off {
+        off = sel;
+    }
+    if sel >= off + room {
+        off = sel + 1 - room;
+    }
+    app.queue.list.offset = off;
+    for (i, t) in app.queue.spotify.clone().iter().enumerate().skip(off).take(room) {
+        if y >= area.bottom() {
+            break;
+        }
+        track_row(app, buf, Rect { x, y, width: w, height: 1 }, i, t, i == sel, false);
+        app.clicks.push((Rect { x, y, width: w, height: 1 }, Click::QueueRow(i)));
+        y += 1;
+    }
 }

@@ -156,7 +156,11 @@ fn welcome(app: &mut App, buf: &mut Buffer, area: Rect) {
         yy += paragraph(buf, Rect { x: body.x + 3, width: body.width - 3, ..body }, yy, d, th.dim());
     }
     yy += 1;
-    paragraph(buf, body, yy, "Everything works with the keyboard alone. Press Enter to begin.", th.muted());
+    yy += paragraph(buf, body, yy, "Everything works with the keyboard alone. Press Enter to begin.", th.muted());
+    if let Some(dir) = &app.return_to_local {
+        let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        paragraph(buf, body, yy + 1, &format!("No Spotify for now? Esc goes back to your local library “{name}”."), th.muted());
+    }
 }
 
 fn app_step(app: &mut App, buf: &mut Buffer, area: Rect) {

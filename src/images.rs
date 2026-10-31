@@ -254,13 +254,29 @@ pub async fn fetch(http: reqwest::Client, url: String, disk: PathBuf) -> anyhow:
     if let Some(seed) = url.strip_prefix("demo://") {
         return Ok(crate::spotify::demo::image(seed));
     }
-    let bytes = match tokio::fs::read(&disk).await {
-        Ok(b) => b,
-        Err(_) => {
-            let b = http.get(&url).send().await?.error_for_status()?.bytes().await?.to_vec();
-            let _ = tokio::fs::write(&disk, &b).await;
-            b
-        }
+    // Local files: art embedded in the file, or an image next to it. No caching needed.
+    let local = if let Some(path) = url.strip_prefix(crate::local::library::ART_SCHEME) {
+        let path = PathBuf::from(path);
+        Some(
+            tokio::task::spawn_blocking(move || crate::local::library::embedded_art(&path))
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("no embedded art"))?,
+        )
+    } else if let Some(path) = url.strip_prefix(crate::local::library::FILE_SCHEME) {
+        Some(tokio::fs::read(path).await?)
+    } else {
+        None
+    };
+    let bytes = match local {
+        Some(b) => b,
+        None => match tokio::fs::read(&disk).await {
+            Ok(b) => b,
+            Err(_) => {
+                let b = http.get(&url).send().await?.error_for_status()?.bytes().await?.to_vec();
+                let _ = tokio::fs::write(&disk, &b).await;
+                b
+            }
+        },
     };
     let img = tokio::task::spawn_blocking(move || image::load_from_memory(&bytes)).await??;
     // Keep memory in check: covers are at most 640px.

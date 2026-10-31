@@ -16,6 +16,7 @@ mod figlet;
 mod font;
 mod images;
 mod keys;
+mod local;
 mod logger;
 mod media;
 mod lyrics;
@@ -28,6 +29,7 @@ mod ui;
 mod visualizer;
 
 use std::io;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -48,6 +50,9 @@ USAGE:
     spotr [OPTIONS]
 
 OPTIONS:
+    -d, --directory [FOLDER]
+                       Play the music files in FOLDER (default: the current folder)
+                       instead of Spotify. Spotr offers to set the folder up first.
     --demo             Explore Spotr with a fictional catalog (no account needed)
     --setup            Run the first-time setup again
     --no-player        Don't start the built-in player this session
@@ -60,9 +65,14 @@ OPTIONS:
     -h, --help         Show this help
     -V, --version      Show the version
 
+Launched in a folder that has a .spotr/ folder (one you've set up), Spotr opens
+it as a local library automatically. `online` and `local` switch at any time.
+
 Inside Spotr press ? for all keyboard shortcuts, or type `help`.";
 
 struct Args {
+    /// `-d [FOLDER]`: open a local library instead of Spotify.
+    directory: Option<PathBuf>,
     setup: bool,
     no_player: bool,
     text_art: bool,
@@ -80,10 +90,20 @@ impl Args {
 }
 
 fn parse_args() -> Option<Args> {
-    let mut a = Args { setup: false, no_player: false, text_art: false, debug: false, demo: false, no_media: false };
+    let mut a = Args { directory: None, setup: false, no_player: false, text_art: false, debug: false, demo: false, no_media: false };
     let paths = Paths::new();
-    for arg in std::env::args().skip(1) {
+    let mut args = std::env::args().skip(1).peekable();
+    while let Some(arg) = args.next() {
+        if let Some(dir) = arg.strip_prefix("--directory=") {
+            a.directory = Some(local_dir(Some(dir.to_string())));
+            continue;
+        }
         match arg.as_str() {
+            "-d" | "--directory" => {
+                // The folder is optional: `spotr -d` uses the current one.
+                let next = args.next_if(|n| !n.starts_with('-') || Path::new(n).exists());
+                a.directory = Some(local_dir(next));
+            }
             "--setup" | "--onboarding" => a.setup = true,
             "--no-player" => a.no_player = true,
             "--text-art" => a.text_art = true,
@@ -147,6 +167,28 @@ fn parse_args() -> Option<Args> {
         }
     }
     Some(a)
+}
+
+/// The folder for `-d`, checked before the UI starts.
+fn local_dir(arg: Option<String>) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let dir = match arg {
+        None => cwd,
+        Some(p) => {
+            let p = match p.strip_prefix('~') {
+                Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+                    dirs::home_dir().unwrap_or_default().join(rest.trim_start_matches('/'))
+                }
+                _ => PathBuf::from(p),
+            };
+            if p.is_absolute() { p } else { cwd.join(p) }
+        }
+    };
+    if !dir.is_dir() {
+        eprintln!("spotr: `{}` isn't a folder", dir.display());
+        std::process::exit(2);
+    }
+    dir.canonicalize().unwrap_or(dir)
 }
 
 /// Clear the screen and force a full redraw.
@@ -270,6 +312,11 @@ async fn run(cfg: Config, paths: Paths, args: Args) -> Result<()> {
         .build()?;
     let images = images::ImageStore::new(picker, paths.cache_dir.join("covers"));
     let mut app = App::new(cfg, paths, tx, http, images, args.demo);
+    // A local library: asked for with -d, or the current folder is one.
+    app.launch_dir = args.directory.clone().or_else(|| {
+        let cwd = std::env::current_dir().ok()?;
+        (!args.demo && local::store::is_initialized(&cwd)).then_some(cwd)
+    });
     // Session-only: not saved to the config.
     app.no_player |= args.no_player;
     if app.cfg.general.media_controls && !args.no_media {
@@ -314,6 +361,10 @@ async fn run(cfg: Config, paths: Paths, args: Args) -> Result<()> {
     }
     .await;
 
+    // Remember where a local library left off, however the loop ended.
+    if app.offline.is_some() {
+        app.close_offline();
+    }
     if let Some(p) = app.local.take() {
         p.shutdown();
         // Dropping the player joins its audio thread; never block the exit on it.

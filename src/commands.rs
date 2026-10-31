@@ -56,7 +56,14 @@ pub const COMMANDS: &[Spec] = &[
     Spec { name: "savealbum", aliases: &[], usage: "savealbum", desc: "Save the current album to your library", args: Args::None, group: "Library" },
     Spec { name: "addto", aliases: &["add-to-playlist"], usage: "addto <playlist>", desc: "Add the current song to a playlist", args: Args::Playlists, group: "Library" },
     // Queue
-    Spec { name: "queue", aliases: &["q"], usage: "queue [add <query> | remove <n> | move <from> <to> | clear]", desc: "Show or edit the queue", args: Args::Choices(&["add", "remove", "move", "clear"]), group: "Queue" },
+    Spec { name: "queue", aliases: &["q"], usage: "queue [add <query> | remove <n> | move <from> <to> | clear]", desc: "Show or edit the queue", args: Args::Choices(&["add", "remove", "move", "clear", "mode", "mode spotr", "mode spotify"]), group: "Queue" },
+    // Local files
+    Spec { name: "local", aliases: &["offline", "files", "folder"], usage: "local [folder]", desc: "Play the music files in a folder (default: the current one)", args: Args::Free, group: "Local files" },
+    Spec { name: "online", aliases: &["spotify"], usage: "online", desc: "Leave the local library, back to Spotify", args: Args::None, group: "Local files" },
+    Spec { name: "init", aliases: &[], usage: "init [folder]", desc: "Set up a folder as a library (creates .spotr/ in it)", args: Args::Free, group: "Local files" },
+    Spec { name: "rescan", aliases: &["scan"], usage: "rescan", desc: "Look for new, changed or removed files", args: Args::None, group: "Local files" },
+    Spec { name: "sort", aliases: &[], usage: "sort <artist | title | album | added | plays | length>", desc: "How the song list is ordered", args: Args::Choices(&["artist", "title", "album", "added", "plays", "length"]), group: "Local files" },
+    Spec { name: "playlist", aliases: &["pl"], usage: "playlist <new | delete | rename> <name>", desc: "Create and manage local playlists", args: Args::Choices(&["new", "delete", "rename", "list"]), group: "Local files" },
     // Views
     Spec { name: "search", aliases: &["find", "s"], usage: "search [query]", desc: "Focus the search bar", args: Args::Free, group: "Views" },
     Spec { name: "lyrics", aliases: &["ly"], usage: "lyrics [ascii | text]", desc: "Show synced lyrics (optionally switch style)", args: Args::Choices(&["ascii", "text"]), group: "Views" },

@@ -14,6 +14,7 @@ use super::*;
 use crate::config::{ArrowMode, CoverMode};
 use crate::keys::Chord;
 
+
 impl App {
     pub(super) fn handle_input(&mut self, ev: Event) {
         if self.quit_at.is_some() {
@@ -158,6 +159,11 @@ impl App {
             BracketLeft | BracketRight => {
                 self.pair_action(self.cfg.playback.bracket_mode, if action == BracketRight { 1 } else { -1 })
             }
+            CycleArrowMode if self.home_active() => {
+                if let Some(tab) = self.offline.as_ref().map(|o| o.home.tab) {
+                    self.set_home_tab(tab.cycle(1));
+                }
+            }
             CycleArrowMode => {
                 self.cfg.playback.arrow_mode = self.cfg.playback.arrow_mode.cycle(1);
                 let keys = format!("{}{}", self.keymap.hint(ArrowLeft, self.theme.unicode), self.keymap.hint(ArrowRight, self.theme.unicode));
@@ -185,19 +191,36 @@ impl App {
             Shuffle => self.set_shuffle(!self.pb.shuffle),
             Repeat => self.cycle_repeat(),
             Like => {
-                if self.search_open && self.focus == Focus::SearchList
-                    && let Some(Item::Track(t)) = self.selected_item().cloned() {
-                        let current = self.pb.track.as_ref().map(|c| c.uri == t.uri).unwrap_or(false);
-                        let like = if current { !self.saved_current.unwrap_or(false) } else { true };
-                        self.set_liked(Some(t), like);
-                        return;
-                    }
+                let selected = if self.search_open && self.focus == Focus::SearchList {
+                    self.selected_item().cloned()
+                } else if self.home_active() {
+                    self.home_selected().cloned()
+                } else {
+                    None
+                };
+                if let Some(Item::Track(t)) = selected {
+                    let current = self.pb.track.as_ref().map(|c| c.uri == t.uri).unwrap_or(false);
+                    let like = if current {
+                        !self.saved_current.unwrap_or(false)
+                    } else if self.offline.is_some() {
+                        // Local likes are known for every song, so * toggles.
+                        !self.local_liked(&t.uri)
+                    } else {
+                        true
+                    };
+                    self.set_liked(Some(t), like);
+                    return;
+                }
                 self.toggle_like_current();
             }
             Lyrics => self.set_view(if self.view == MainView::Lyrics && !self.search_open { MainView::NowPlaying } else { MainView::Lyrics }),
             Queue => self.set_view(if self.view == MainView::Queue && !self.search_open { MainView::NowPlaying } else { MainView::Queue }),
             Devices => self.set_overlay(if self.overlay == Overlay::Devices { Overlay::None } else { Overlay::Devices }),
             Library => {
+                if self.home_active() {
+                    self.set_home_tab(HomeTab::Albums);
+                    return;
+                }
                 self.open_search(false);
                 if !matches!(self.search.stack.last().map(|p| p.kind), Some(PageKind::Library)) {
                     self.open_library(false);
@@ -223,7 +246,13 @@ impl App {
                 self.save_config();
             }
             AddToQueue => {
-                let item = if self.search_open { self.selected_item().cloned() } else { None };
+                let item = if self.search_open {
+                    self.selected_item().cloned()
+                } else if self.home_active() {
+                    self.home_selected().cloned()
+                } else {
+                    None
+                };
                 match item {
                     Some(Item::Track(t)) => self.enqueue(t),
                     Some(_) => self.toast(ToastKind::Info, "Only songs can be queued"),
@@ -299,6 +328,11 @@ impl App {
                     self.maybe_load_more();
                 }
                 KeyCode::Enter => self.activate_selected(),
+                KeyCode::Delete if self.offline.is_some() => {
+                    if !self.remove_from_local_playlist() {
+                        return false;
+                    }
+                }
                 KeyCode::Backspace => {
                     if !self.pop_page() {
                         self.focus = Focus::SearchInput;
@@ -315,10 +349,60 @@ impl App {
         if self.search_open || self.overlay != Overlay::None {
             return false;
         }
+        if self.home_active() {
+            match k.code {
+                KeyCode::Up => self.home_step(-1),
+                KeyCode::Down => self.home_step(1),
+                KeyCode::PageUp => self.home_step(-10),
+                KeyCode::PageDown => self.home_step(10),
+                KeyCode::Home => self.home_jump(false),
+                KeyCode::End => self.home_jump(true),
+                KeyCode::Enter => {
+                    let i = self.offline.as_ref().map(|o| o.home.nav.selected).unwrap_or(0);
+                    self.activate_home(i);
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    let dir = if k.code == KeyCode::BackTab || shift { -1 } else { 1 };
+                    if let Some(tab) = self.offline.as_ref().map(|o| o.home.tab) {
+                        self.set_home_tab(tab.cycle(dir));
+                    }
+                }
+                _ => return false,
+            }
+            return true;
+        }
         match self.view {
+            MainView::Queue if self.spotify_queue() => {
+                let n = self.queue.spotify.len();
+                match k.code {
+                    KeyCode::Up if !(shift || alt) => self.queue.list.simple_step(-1, n),
+                    KeyCode::Down if !(shift || alt) => self.queue.list.simple_step(1, n),
+                    KeyCode::PageUp => self.queue.list.simple_step(-10, n),
+                    KeyCode::PageDown => self.queue.list.simple_step(10, n),
+                    KeyCode::Home => self.queue.list.selected = 0,
+                    KeyCode::End => self.queue.list.selected = n.saturating_sub(1),
+                    KeyCode::Enter => {
+                        let i = self.queue.list.selected;
+                        self.queue_jump(i);
+                    }
+                    KeyCode::Tab | KeyCode::BackTab => self.set_queue_mode(crate::config::QueueMode::Spotr),
+                    KeyCode::Up | KeyCode::Down | KeyCode::Delete | KeyCode::Backspace => {
+                        self.toast(ToastKind::Info, "Spotify's queue can't be rearranged from here — Tab switches to Spotr's queue");
+                    }
+                    _ => return false,
+                }
+                true
+            }
             MainView::Queue => {
                 let n = self.queue.items.len();
                 match k.code {
+                    KeyCode::Tab | KeyCode::BackTab => {
+                        if self.offline.is_some() {
+                            self.toast(ToastKind::Info, "A local library always uses Spotr's queue");
+                        } else {
+                            self.set_queue_mode(crate::config::QueueMode::Spotify);
+                        }
+                    }
                     KeyCode::Up if shift || alt => self.queue_move(-1),
                     KeyCode::Down if shift || alt => self.queue_move(1),
                     KeyCode::Up => self.queue.list.simple_step(-1, n),
@@ -570,6 +654,28 @@ impl App {
                 }
                 true
             }
+            Overlay::Init => {
+                match k.code {
+                    KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => self.cancel_init(),
+                    KeyCode::Enter => {
+                        if self.init_prompt.as_ref().is_some_and(|p| p.choice == 0) {
+                            self.confirm_init();
+                        } else {
+                            self.cancel_init();
+                        }
+                    }
+                    // A quick "y" only for folders without a warning.
+                    KeyCode::Char('y') | KeyCode::Char('Y') if self.init_prompt.as_ref().is_some_and(|p| p.warning.is_none()) => self.confirm_init(),
+                    KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down => {
+                        if let Some(p) = self.init_prompt.as_mut() {
+                            p.choice = 1 - p.choice.min(1);
+                        }
+                    }
+                    KeyCode::Char('q') if k.modifiers.contains(KeyModifiers::CONTROL) => self.quit(),
+                    _ => {}
+                }
+                true
+            }
             Overlay::None => false,
         }
     }
@@ -611,7 +717,12 @@ impl App {
             self.audio.set_device(&name);
             self.cfg.general.audio_device = name.clone();
             self.save_config();
-            self.toast(ToastKind::Success, format!("Built-in player now outputs to {name}"));
+            if self.offline.is_some() {
+                self.pb.device = Some(self.local_device());
+                self.toast(ToastKind::Success, format!("Now playing through {name}"));
+            } else {
+                self.toast(ToastKind::Success, format!("Built-in player now outputs to {name}"));
+            }
         }
     }
 
@@ -645,6 +756,19 @@ impl App {
                             }
                         }
                         Click::QueueRow(i) => self.queue.list.selected = i,
+                        Click::HomeRow(i) => {
+                            if let Some(off) = self.offline.as_mut()
+                                && off.home.nav.selected != i
+                            {
+                                off.home.nav.selected = i;
+                                off.home.nav.moved_at = Some(Instant::now());
+                            }
+                        }
+                        Click::InitChoice(i) => {
+                            if let Some(p) = self.init_prompt.as_mut() {
+                                p.choice = i;
+                            }
+                        }
                         Click::DeviceRow(i) => self.devices.nav.selected = i,
                         Click::SettingsRow(i) if self.settings.editing.is_none() && self.settings.capture.is_none() => {
                             self.settings.selected = i
@@ -679,7 +803,7 @@ impl App {
                 self.devices.nav.simple_step(dir, n);
                 return;
             }
-            Overlay::About => return,
+            Overlay::About | Overlay::Init => return,
             Overlay::None => {}
         }
         if matches!(target, Some(Click::Volume { .. })) {
@@ -690,8 +814,15 @@ impl App {
             self.browse_step(dir * 2);
             return;
         }
+        if self.home_active() {
+            self.home_step(dir * 2);
+            return;
+        }
         match self.view {
-            MainView::Queue => self.queue.list.simple_step(dir, self.queue.items.len()),
+            MainView::Queue => {
+                let n = if self.spotify_queue() { self.queue.spotify.len() } else { self.queue.items.len() };
+                self.queue.list.simple_step(dir, n)
+            }
             MainView::Lyrics => {
                 let n = self.lyrics.data.as_ref().map(|l| l.lines.len()).unwrap_or(0);
                 if n > 0 {
@@ -757,6 +888,13 @@ impl App {
                     self.close_search();
                 }
             }
+            Click::QueueRow(i) if self.spotify_queue() => {
+                if self.queue.list.selected == i {
+                    self.queue_jump(i);
+                } else {
+                    self.queue.list.selected = i;
+                }
+            }
             Click::QueueRow(i) => {
                 if self.queue.list.selected == i {
                     if i < self.queue.items.len() {
@@ -801,6 +939,24 @@ impl App {
             }
             Click::Run(cmd) => self.execute(cmd),
             Click::Onboard(_) => {}
+            Click::HomeRow(i) => {
+                if let Some(off) = self.offline.as_mut() {
+                    off.home.nav.selected = i;
+                }
+                self.activate_home(i);
+            }
+            Click::HomeTab(i) => {
+                if let Some(tab) = HomeTab::ALL.get(i) {
+                    self.set_home_tab(*tab);
+                }
+            }
+            Click::InitChoice(i) => {
+                if i == 0 {
+                    self.confirm_init();
+                } else {
+                    self.cancel_init();
+                }
+            }
         }
     }
 }

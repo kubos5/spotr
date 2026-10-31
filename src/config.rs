@@ -105,7 +105,12 @@ cycle_enum!(VisColors { Spectrum => "Spectrum", Accent => "Accent", Mono => "Mon
 cycle_enum!(VisSource { Auto => "Auto", Simulated => "Simulated" });
 // What a key pair (← / → or [ / ]) does.
 cycle_enum!(ArrowMode { Seek => "Seek", Track => "Track", Speed => "Speed", Volume => "Volume" });
-cycle_enum!(SearchContext { Album => "Album", Single => "Single" });
+// What plays after a song started from search results.
+cycle_enum!(SearchContext { Album => "Album", Radio => "Radio", Single => "Single" });
+// Who manages "up next": Spotr's own editable queue, or Spotify's queue and radio.
+cycle_enum!(QueueMode { Spotr => "Spotr", Spotify => "Spotify" });
+// How the local library's song list is ordered.
+cycle_enum!(SongSort { Artist => "Artist", Title => "Title", Album => "Album", Added => "Recently added", Plays => "Most played", Duration => "Length" });
 cycle_enum!(SearchFilter { All => "All", Tracks => "Tracks", Artists => "Artists", Albums => "Albums", Playlists => "Playlists" });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +123,7 @@ pub struct Config {
     pub playback: Playback,
     pub search: Search,
     pub lyrics: Lyrics,
+    pub local: Local,
     /// Action name -> list of key strings (`"space"`, `"ctrl+l"`, `"?"`).
     pub keys: BTreeMap<String, Vec<String>>,
 }
@@ -205,6 +211,7 @@ pub struct Playback {
     /// What `[` / `]` do.
     pub bracket_mode: ArrowMode,
     pub search_context: SearchContext,
+    pub queue_mode: QueueMode,
     pub digit_seek: bool,
     /// Volume of the built-in player, remembered across sessions.
     pub volume: u32,
@@ -222,6 +229,23 @@ pub struct Search {
     pub remember_position: bool,
     pub close_on_play: bool,
     pub show_top_result: bool,
+}
+
+/// Local files mode (`spotr -d`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Local {
+    pub sort: SongSort,
+    /// Look for `.lrc` files and embedded lyrics before asking LRCLIB.
+    pub online_lyrics: bool,
+    /// Offer to pick up where you left off.
+    pub resume: bool,
+}
+
+impl Default for Local {
+    fn default() -> Self {
+        Self { sort: SongSort::Artist, online_lyrics: true, resume: true }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -310,6 +334,7 @@ impl Default for Playback {
             arrow_mode: ArrowMode::Seek,
             bracket_mode: ArrowMode::Track,
             search_context: SearchContext::Album,
+            queue_mode: QueueMode::Spotr,
             digit_seek: true,
             queue_handoff: 3,
             volume: 70,
@@ -347,6 +372,7 @@ impl Default for Config {
             playback: Playback::default(),
             search: Search::default(),
             lyrics: Lyrics::default(),
+            local: Local::default(),
             keys: default_keys(),
         }
     }

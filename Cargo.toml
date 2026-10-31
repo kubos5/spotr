@@ -11,7 +11,7 @@ categories = ["command-line-utilities", "multimedia::audio"]
 repository = "https://github.com/kubos5/spotr"
 
 [features]
-default = ["local-player"]
+default = ["local-player", "local-files"]
 # Built-in Spotify Connect player (librespot). Enables the real-time audio
 # visualizer and playback speed control.
 local-player = [
@@ -21,6 +21,8 @@ local-player = [
     "dep:librespot-oauth",
     "dep:cpal",
 ]
+# Local files mode (`spotr -d`): plays the music files in a folder, no account needed.
+local-files = ["dep:symphonia", "dep:cpal"]
 
 [dependencies]
 anyhow = "1.0"
@@ -52,6 +54,9 @@ librespot-playback = { version = "0.8", optional = true, default-features = fals
 librespot-connect = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-webpki-roots"] }
 librespot-oauth = { version = "0.8", optional = true, default-features = false, features = ["rustls-tls-webpki-roots"] }
 cpal = { version = "0.15", optional = true }
+symphonia = { version = "0.5", optional = true, default-features = false, features = [
+    "mp3", "flac", "vorbis", "ogg", "wav", "pcm", "adpcm", "aiff", "isomp4", "aac", "alac", "caf", "mkv",
+] }
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 
 [profile.release]

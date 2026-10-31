@@ -88,11 +88,13 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
         put(buf, area.x + (area.width - width(&msg)) / 2, area.y + area.height / 3, &msg, style, area.width);
         return;
     }
-    let big_first = app.cfg.search.show_top_result;
+    // Spotify (and local search) rank a top result; an empty local query lists everything.
+    let big_first = app.cfg.search.show_top_result && !(app.offline.is_some() && app.search.query.is_empty());
     let items = app.search.items.clone();
     let mut nav = app.search.list;
     let shown = app.search.shown_at;
-    list(app, buf, area, &items, &mut nav, big_first, None, shown);
+    let focused = app.focus == Focus::SearchList;
+    list(app, buf, area, &items, &mut nav, big_first, None, shown, focused, Click::Row);
     app.search.list = nav;
     if app.search.loading_more {
         let msg = format!("{} loading more", app.theme.spinner(app.frame));
@@ -133,9 +135,20 @@ fn row_height(i: usize, big_first: bool) -> u16 {
 }
 
 /// Draw a scrolling list. `numbers`: show track numbers (album pages).
+/// `click` makes the mouse target for row `i`.
 #[allow(clippy::too_many_arguments)]
-fn list(app: &mut App, buf: &mut Buffer, area: Rect, items: &[Item], nav: &mut ListNav, big_first: bool, numbers: Option<PageKind>, shown: Instant) {
-    let focused = app.focus == Focus::SearchList;
+pub(super) fn list(
+    app: &mut App,
+    buf: &mut Buffer,
+    area: Rect,
+    items: &[Item],
+    nav: &mut ListNav,
+    big_first: bool,
+    numbers: Option<PageKind>,
+    shown: Instant,
+    focused: bool,
+    click: fn(usize) -> Click,
+) {
     let sel = nav.selected.min(items.len().saturating_sub(1));
     // Keep the selection visible (rows have different heights).
     if sel < nav.offset {
@@ -185,7 +198,7 @@ fn list(app: &mut App, buf: &mut Buffer, area: Rect, items: &[Item], nav: &mut L
             row(app, buf, rect, item, selected, focused, slide, t < 1.0, playing_uri.as_deref(), numbers.map(|_| track_no));
         }
         if item.is_selectable() {
-            app.clicks.push((rect, Click::Row(i)));
+            app.clicks.push((rect, click(i)));
         }
         y += h;
         if y >= area.bottom() {
@@ -219,6 +232,8 @@ fn item_icon(app: &App, item: &Item) -> &'static str {
         Item::Link { target: LinkTarget::ShuffleAll, .. } => app.theme.icon(Icon::Shuffle),
         Item::Link { target: LinkTarget::LikedSongs, .. } => app.theme.icon(Icon::Heart),
         Item::Link { target: LinkTarget::Recent, .. } => app.theme.icon(Icon::Clock),
+        Item::Link { target: LinkTarget::Resume, .. } => app.theme.icon(Icon::Play),
+        Item::Link { target: LinkTarget::AllSongs, .. } => app.theme.icon(Icon::Track),
         Item::Link { .. } => app.theme.icon(Icon::Pointer),
         Item::Header(_) => "",
     }
@@ -243,6 +258,10 @@ fn subtitle(item: &Item) -> String {
                 None => artists,
             }
         }
+        // Spotify's own search doesn't say how long playlists are.
+        Item::Playlist(p) if p.total() == 0 && p.owner_name().is_empty() => "Playlist".into(),
+        Item::Playlist(p) if p.total() == 0 && p.tracks.is_none() => format!("by {}", p.owner_name()),
+        Item::Playlist(p) if p.total() == 1 => format!("by {} · 1 song", p.owner_name()),
         Item::Playlist(p) => format!("by {} · {} songs", p.owner_name(), p.total()),
         Item::Link { subtitle, .. } => subtitle.clone(),
         Item::Header(_) => String::new(),
@@ -297,10 +316,15 @@ fn row(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: bool,
     let avail = w.saturating_sub(6 + rw + 2);
     let name_w = (avail as f32 * 0.55) as u16;
     let mut name = item.name().to_string();
-    if let Item::Track(t) = item
-        && t.explicit {
+    if let Item::Track(t) = item {
+        if t.explicit {
             name = format!("{name} {}", th.icon(Icon::Explicit));
         }
+        // Local likes are known for every row, so show them.
+        if t.is_local && app.local_liked(&t.uri) {
+            name = format!("{name} {}", th.icon(Icon::Heart));
+        }
+    }
     let name_style = if selected && focused { base } else if is_playing { th.accent_bold() } else { base.add_modifier(Modifier::BOLD) };
     let nw = put(buf, name_x, rect.y, &ellipsize(&name, name_w as usize), name_style, name_w);
     let sub = match (item, number.is_some()) {
@@ -372,7 +396,9 @@ fn page(app: &mut App, buf: &mut Buffer, area: Rect) {
         let glyph = match kind {
             PageKind::Liked => app.theme.icon(Icon::Heart),
             PageKind::Recent => app.theme.icon(Icon::Clock),
-            PageKind::Library => app.theme.icon(Icon::Playlist),
+            PageKind::Library | PageKind::Playlist => app.theme.icon(Icon::Playlist),
+            PageKind::Album => app.theme.icon(Icon::Album),
+            PageKind::Artist => app.theme.icon(Icon::Artist),
             _ => app.theme.icon(Icon::Track),
         };
         let inner = panel(app, buf, Rect { width: cover_w.max(8), ..cover_rect }, None, true);
@@ -389,6 +415,7 @@ fn page(app: &mut App, buf: &mut Buffer, area: Rect) {
         PageKind::Recent => "HISTORY",
         PageKind::Top => "FOR YOU",
         PageKind::Library => "LIBRARY",
+        PageKind::Songs => "ALL SONGS",
     };
     let font = app.title_font();
     let title_h = crate::font::lines_for(font).min(header_h.saturating_sub(4));
@@ -415,8 +442,9 @@ fn page(app: &mut App, buf: &mut Buffer, area: Rect) {
     let p = app.search.stack.last().unwrap();
     let items = p.items.clone();
     let mut nav = p.list;
-    let numbers = if kind == PageKind::Album || kind == PageKind::Playlist || kind == PageKind::Liked { Some(kind) } else { None };
-    list(app, buf, list_area, &items, &mut nav, false, numbers, opened);
+    let numbers = if matches!(kind, PageKind::Album | PageKind::Playlist | PageKind::Liked | PageKind::Songs) { Some(kind) } else { None };
+    let focused = app.focus == Focus::SearchList;
+    list(app, buf, list_area, &items, &mut nav, false, numbers, opened, focused, Click::Row);
     if let Some(p) = app.search.stack.last_mut() {
         p.list = nav;
     }

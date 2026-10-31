@@ -387,7 +387,7 @@ impl Demo {
             .filter(|p| hit(&format!("{} {}", p.name, p.description.clone().unwrap_or_default())))
             .collect();
         let totals = [tracks.len() as u32, artists.len() as u32, albums.len() as u32, playlists.len() as u32];
-        SearchResults { tracks, artists, albums, playlists, totals }
+        SearchResults { tracks, artists, albums, playlists, totals, top: None }
     }
 
     pub fn album(&self, id: &str) -> Option<(Album, Vec<Track>)> {
@@ -432,6 +432,13 @@ impl Demo {
 
     pub fn followed_artists(&self) -> Vec<Artist> {
         self.artists.clone()
+    }
+
+    /// A "song radio": the seed, then the other songs by popularity.
+    pub fn radio(&self, seed: &str) -> Vec<String> {
+        let mut v: Vec<&Track> = self.tracks.iter().filter(|t| t.uri != seed).collect();
+        v.sort_by_key(|t| std::cmp::Reverse(t.popularity.unwrap_or(0)));
+        std::iter::once(seed.to_string()).chain(v.into_iter().take(24).map(|t| t.uri.clone())).collect()
     }
 
     pub fn top_tracks(&self) -> Vec<Track> {

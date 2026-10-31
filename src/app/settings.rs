@@ -7,7 +7,7 @@ use crate::config::*;
 use crate::keys::Chord;
 use crate::textinput::TextInput;
 
-pub const TABS: &[&str] = &["Look", "Motion", "Visualizer", "Playback", "Search", "Player", "Keys", "Account"];
+pub const TABS: &[&str] = &["Look", "Motion", "Visualizer", "Playback", "Search", "Player", "Local", "Keys", "Account"];
 
 #[derive(Default)]
 pub struct SettingsState {
@@ -60,6 +60,7 @@ pub enum Id {
     BracketMode,
     DigitSeek,
     SearchContext,
+    QueueMode,
     QueueHandoff,
     Karaoke,
     LyricsAscii,
@@ -79,6 +80,11 @@ pub enum Id {
     PlayerLogin,
     PollInterval,
     MediaControls,
+    LocalSort,
+    LocalLyrics,
+    LocalResume,
+    LocalRescan,
+    LocalMode,
     Key(Action),
     ResetKeys,
     SpotifyApp,
@@ -156,8 +162,9 @@ pub fn rows(tab: usize) -> Vec<Row> {
             row(VolumeStep, "Volume step", "Percent per ↑ / ↓.", Number),
             row(SpeedStep, "Speed step", "Speed change per press.", Number),
             row(DigitSeek, "Digits seek", "0–9 jump to 0%–90% of the song.", Toggle),
-            row(SearchContext, "Songs from search", "Album: keep playing the album afterwards. Single: just that song.", Choice),
-            row(QueueHandoff, "Queue handoff", "Seconds before a song ends when the next queued song is sent to Spotify.", Number),
+            row(QueueMode, "Queue", "Spotr: your own queue, reorder it freely. Spotify: Spotify's queue, and Spotify's radio picks what plays after searched songs. Tab in the queue switches.", Choice),
+            row(SearchContext, "Songs from search", "With the Spotr queue — Album: keep playing the album. Radio: Spotify picks similar songs. Single: just that song.", Choice),
+            row(QueueHandoff, "Queue handoff", "Seconds before a song ends when the next Spotr-queue song is sent to Spotify.", Number),
             row(Karaoke, "Karaoke lyrics", "Fill the current lyric line as it's sung.", Toggle),
             row(LyricsAscii, "Lyrics style", "Plain text, or ASCII art in the lyrics font.", Choice),
             row(LyricsFont, "Lyrics font", "Font for ASCII-art lyrics. Compact fonts (Slim, Small Braille, ANSI Compact) fit more lines.", Choice),
@@ -181,7 +188,14 @@ pub fn rows(tab: usize) -> Vec<Row> {
             row(PollInterval, "Sync interval", "Milliseconds between playback state refreshes.", Number),
             row(MediaControls, "OS media controls", "Show what's playing in Now Playing / MPRIS and accept media keys (applies after a restart).", Toggle),
         ],
-        6 => {
+        6 => vec![
+            row(LocalMode, "Local library", "Play the music files in a folder instead of Spotify (`spotr -d [folder]`, or the `local` command).", Button),
+            row(LocalSort, "Sort songs by", "Order of the song list in a local library (also the `sort` command).", Choice),
+            row(LocalLyrics, "Lyrics from LRCLIB", "Local songs use .lrc files and embedded lyrics first; this looks online when there are none.", Toggle),
+            row(LocalResume, "Offer to resume", "Show where you left off at the top of the library.", Toggle),
+            row(LocalRescan, "Rescan library", "Look for new, changed or removed files now.", Button),
+        ],
+        7 => {
             let mut v: Vec<Row> = Action::ALL
                 .iter()
                 .map(|a| Row { id: Id::Key(*a), label: a.label().to_string(), desc: "Enter: rebind · Del: reset to default", kind: Kind::Key })
@@ -252,6 +266,7 @@ impl App {
             BracketMode => c.playback.bracket_mode.label().into(),
             DigitSeek => on_off(c.playback.digit_seek),
             SearchContext => c.playback.search_context.label().into(),
+            QueueMode => if self.offline.is_some() { "Spotr (local library)".into() } else { format!("{}-managed", c.playback.queue_mode.label()) },
             QueueHandoff => format!("{} s", c.playback.queue_handoff),
             Karaoke => on_off(c.lyrics.karaoke),
             LyricsAscii => (if c.lyrics.ascii { "ASCII art" } else { "Text" }).into(),
@@ -290,6 +305,14 @@ impl App {
             PlayerLogin => "Enter ⏎".into(),
             PollInterval => format!("{} ms", c.general.poll_interval_ms),
             MediaControls => on_off(c.general.media_controls),
+            LocalSort => c.local.sort.label().into(),
+            LocalLyrics => on_off(c.local.online_lyrics),
+            LocalResume => on_off(c.local.resume),
+            LocalRescan => if self.offline.is_some() { "Enter ⏎".into() } else { "local mode only".into() },
+            LocalMode => match &self.offline {
+                Some(o) => format!("{} · Enter: back to Spotify", o.name),
+                None => "Enter: open the current folder".into(),
+            },
             Key(a) => self.keymap.hints(a, self.theme.unicode),
             ResetKeys | Relogin | Logout | RerunOnboarding | ResetAll => "Enter ⏎".into(),
             SpotifyApp => {
@@ -354,6 +377,13 @@ impl App {
             BracketMode => c.playback.bracket_mode = c.playback.bracket_mode.cycle(dir),
             DigitSeek => c.playback.digit_seek = !c.playback.digit_seek,
             SearchContext => c.playback.search_context = c.playback.search_context.cycle(dir),
+            QueueMode => {
+                let next = c.playback.queue_mode.cycle(dir);
+                self.set_queue_mode(next);
+                let row = self.settings.selected;
+                self.settings.changed_at = Some((row, Instant::now()));
+                return;
+            }
             QueueHandoff => c.playback.queue_handoff = (c.playback.queue_handoff as i32 + dir).clamp(1, 15) as u32,
             Karaoke => c.lyrics.karaoke = !c.lyrics.karaoke,
             LyricsAscii => c.lyrics.ascii = !c.lyrics.ascii,
@@ -400,6 +430,12 @@ impl App {
                 self.toast(ToastKind::Info, "Applies after `player restart`");
             }
             MediaControls => c.general.media_controls = !c.general.media_controls,
+            LocalSort => {
+                c.local.sort = c.local.sort.cycle(dir);
+                self.local_resort();
+            }
+            LocalLyrics => c.local.online_lyrics = !c.local.online_lyrics,
+            LocalResume => c.local.resume = !c.local.resume,
             PollInterval => c.general.poll_interval_ms = (c.general.poll_interval_ms as i64 + 250 * dir as i64).clamp(250, 10_000) as u64,
             _ => return,
         }
@@ -421,6 +457,11 @@ impl App {
                 self.toast(ToastKind::Success, "Shortcuts reset to defaults");
             }
             PlayerLogin => self.execute("player login"),
+            LocalRescan => self.execute("rescan"),
+            LocalMode => {
+                self.set_overlay(Overlay::None);
+                self.execute(if self.offline.is_some() { "online" } else { "local" });
+            }
             Relogin => {
                 self.set_overlay(Overlay::None);
                 self.execute("login");

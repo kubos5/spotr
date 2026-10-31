@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 use super::*;
+use crate::config::QueueMode;
 use crate::player::LocalOptions;
 use crate::spotify::PlayRequest;
 use crate::spotify::api::is_no_device;
@@ -57,14 +58,14 @@ impl App {
         }
     }
 
-    fn on_track_change(&mut self) {
+    pub(super) fn on_track_change(&mut self) {
         self.track_changed_at = Instant::now();
         self.saved_current = None;
         let Some(track) = self.pb.track.clone() else { return };
         if let Some(url) = track.image(300) {
             self.want_image(&url);
         }
-        if let Some(id) = track.id.clone().filter(|_| !track.is_episode) {
+        if let Some(id) = track.id.clone().filter(|_| !track.is_episode && self.offline.is_none()) {
             let sp = self.spotify.clone();
             self.spawn(async move {
                 match sp.is_saved(&id).await {
@@ -90,6 +91,10 @@ impl App {
             return;
         }
         self.lyrics = LyricsState { uri: t.uri.clone(), loading: true, ..Default::default() };
+        if self.offline.is_some() {
+            self.off_lyrics(t);
+            return;
+        }
         if self.spotify.is_demo() {
             self.lyrics.loading = false;
             self.lyrics.data = Some(crate::spotify::demo::lyrics());
@@ -120,6 +125,10 @@ impl App {
         if was {
             return;
         }
+        if self.offline.is_some() {
+            self.off_resume();
+            return;
+        }
         let dev = self.fallback_device();
         if self.pb.device.is_none() && dev.is_none() {
             self.pb.is_playing = false;
@@ -147,15 +156,23 @@ impl App {
         self.pb.is_playing = false;
         self.pb.hold(900);
         self.osd(self.theme.icon(crate::theme::Icon::Pause), "Pause", None);
+        if self.offline.is_some() {
+            self.off_pause();
+            return;
+        }
         self.run(None, |sp| async move { sp.pause(None).await });
     }
 
     pub fn next(&mut self) {
         self.press(Ctl::Next);
         self.osd(self.theme.icon(crate::theme::Icon::Next), "Next", None);
+        if self.offline.is_some() {
+            self.off_next(true);
+            return;
+        }
         let dev = self.fallback_device();
         // Hand the head of the Spotr queue to Spotify first so it plays next.
-        let head = if self.queue.committed.is_none() && !self.queue.items.is_empty() {
+        let head = if !self.spotify_queue() && self.queue.committed.is_none() && !self.queue.items.is_empty() {
             let t = self.queue.items.remove(0);
             self.queue.committed = Some(t.clone());
             Some(t.uri)
@@ -174,6 +191,10 @@ impl App {
     pub fn previous(&mut self) {
         self.press(Ctl::Prev);
         self.osd(self.theme.icon(crate::theme::Icon::Prev), "Previous", None);
+        if self.offline.is_some() {
+            self.off_previous();
+            return;
+        }
         let dev = self.fallback_device();
         self.run(None, move |sp| async move { sp.previous(dev.as_deref()).await });
         self.poll_soon(400);
@@ -183,6 +204,11 @@ impl App {
         let dur = self.pb.duration();
         let ms = if dur > 0 { ms.min(dur.saturating_sub(500)) } else { ms };
         self.pb.set_position(ms);
+        if self.offline.is_some() {
+            self.pb.hold(250);
+            self.off_seek(ms);
+            return;
+        }
         self.pb.hold(1200);
         self.run(None, move |sp| async move { sp.seek(ms).await });
     }
@@ -209,12 +235,16 @@ impl App {
     pub fn set_volume(&mut self, v: u32) {
         let v = v.min(100);
         self.pb.volume = Some(v);
-        if self.is_local_active() || self.pb.device.is_none() {
+        if self.is_local_active() || self.pb.device.is_none() || self.offline.is_some() {
             self.remember_volume(v);
         }
         self.pb.hold(1200);
         let icon = if v == 0 { self.theme.icon(crate::theme::Icon::Mute) } else { self.theme.icon(crate::theme::Icon::Volume) };
         self.osd(icon, format!("Volume {v}%"), Some(v as f32 / 100.0));
+        if self.offline.is_some() {
+            self.off_volume(v);
+            return;
+        }
         if self.pb.device.as_ref().is_some_and(|d| !d.supports_volume) {
             self.toast(ToastKind::Warn, "This device doesn't support remote volume");
             return;
@@ -243,6 +273,10 @@ impl App {
         self.pb.shuffle = on;
         self.pb.hold(1200);
         self.osd(self.theme.icon(crate::theme::Icon::Shuffle), if on { "Shuffle on" } else { "Shuffle off" }, None);
+        if self.offline.is_some() {
+            self.off_shuffle(on);
+            return;
+        }
         self.run(None, move |sp| async move { sp.shuffle(on).await });
     }
 
@@ -258,6 +292,9 @@ impl App {
         };
         let icon = if state == "track" { crate::theme::Icon::RepeatOne } else { crate::theme::Icon::Repeat };
         self.osd(self.theme.icon(icon), label, None);
+        if self.offline.is_some() {
+            return;
+        }
         self.run(None, move |sp| async move { sp.repeat(&state).await });
     }
 
@@ -279,7 +316,7 @@ impl App {
         self.pb.set_position(pos);
         self.audio.set_speed(s);
         self.osd(self.theme.icon(crate::theme::Icon::Speed), format!("Speed {s}×"), Some((s - 0.25) / 2.75));
-        if !self.is_local_active() && (s - 1.0).abs() > f32::EPSILON {
+        if !self.is_local_active() && self.offline.is_none() && (s - 1.0).abs() > f32::EPSILON {
             if crate::player::AVAILABLE {
                 self.toast(
                     ToastKind::Warn,
@@ -301,6 +338,10 @@ impl App {
             self.toast(ToastKind::Warn, "Nothing to like");
             return;
         };
+        if self.offline.is_some() {
+            self.off_set_liked(track, like);
+            return;
+        }
         let Some(id) = track.id.clone() else {
             self.toast(ToastKind::Warn, "This item can't be saved");
             return;
@@ -331,6 +372,19 @@ impl App {
     // ---------------------------------------------------------------- play
 
     pub fn play_request(&mut self, req: PlayRequest, label: String) {
+        if self.offline.is_some() {
+            // Local URIs: play them as a list from the offset.
+            let Some(off) = self.offline.as_ref() else { return };
+            let tracks: Vec<Track> = req
+                .uris
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|u| crate::local::library::rel_of(u).and_then(|r| off.lib.track(r)).cloned())
+                .collect();
+            let start = req.offset_uri.as_ref().and_then(|o| tracks.iter().position(|t| &t.uri == o)).or(req.offset_position.map(|p| p as usize)).unwrap_or(0);
+            self.off_play_list(tracks, start, label, req.context_uri);
+            return;
+        }
         let dev = self.fallback_device();
         if self.pb.device.is_none() && dev.is_none() {
             self.toast(ToastKind::Warn, "No active device — pick one first");
@@ -355,7 +409,57 @@ impl App {
         self.poll_soon(500);
     }
 
+    /// Spotify's song radio: the song, then what Spotify would play after it.
+    /// Falls back to the song alone when the radio isn't available.
+    pub fn play_radio(&mut self, track: &Track) {
+        if self.offline.is_some() {
+            self.off_play_radio(track);
+            return;
+        }
+        let dev = self.fallback_device();
+        if self.pb.device.is_none() && dev.is_none() {
+            self.toast(ToastKind::Warn, "No active device — pick one first");
+            self.set_overlay(Overlay::Devices);
+            return;
+        }
+        self.pb.is_playing = true;
+        self.pb.set_position(0);
+        self.pb.hold(700);
+        self.osd(self.theme.icon(crate::theme::Icon::Play), format!("{} · radio", track.name), None);
+        let seed = track.uri.clone();
+        let name = track.name.clone();
+        let tx = self.tx.clone();
+        self.run(None, move |sp| async move {
+            let (uris, error) = match sp.radio(&seed).await {
+                Ok(u) => (u, None),
+                Err(e) => (vec![seed.clone()], Some(e.to_string())),
+            };
+            let _ = tx.send(AppEvent::Radio { name, uris: uris.clone(), error });
+            sp.play(dev.as_deref(), Some(PlayRequest { uris: Some(uris), ..Default::default() })).await
+        });
+        self.poll_soon(600);
+    }
+
+    pub(super) fn on_radio(&mut self, name: String, uris: Vec<String>, error: Option<String>) {
+        match error {
+            Some(e) => {
+                self.radio = None;
+                log::info!("radio unavailable: {e}");
+                self.toast(ToastKind::Info, format!("Spotify radio isn't available ({e}) — playing just “{name}”"));
+            }
+            None => {
+                let n = uris.len().saturating_sub(1);
+                self.radio = Some(RadioInfo { name: name.clone(), uris: uris.into_iter().collect() });
+                self.toast(ToastKind::Success, format!("Radio for “{name}” — {n} songs picked by Spotify"));
+            }
+        }
+    }
+
     pub fn play_track_alone(&mut self, track: &Track) {
+        if self.offline.is_some() {
+            self.off_play_now(track.clone());
+            return;
+        }
         self.play_request(
             PlayRequest { uris: Some(vec![track.uri.clone()]), ..Default::default() },
             track.name.clone(),
@@ -371,8 +475,80 @@ impl App {
 
     // --------------------------------------------------------------- queue
 
+    /// Spotify manages "up next" (its queue, its radio) instead of Spotr.
+    pub fn spotify_queue(&self) -> bool {
+        self.offline.is_none() && self.cfg.playback.queue_mode == QueueMode::Spotify
+    }
+
+    pub fn set_queue_mode(&mut self, mode: QueueMode) {
+        if self.offline.is_some() {
+            self.toast(ToastKind::Info, "A local library always uses Spotr's queue");
+            return;
+        }
+        if self.cfg.playback.queue_mode == mode {
+            return;
+        }
+        self.cfg.playback.queue_mode = mode;
+        self.save_config();
+        self.queue.list = ListNav::default();
+        self.view_changed_at = Instant::now();
+        let icon = self.theme.icon(crate::theme::Icon::Queue);
+        match mode {
+            QueueMode::Spotify => {
+                self.osd(icon, "Spotify queue", None);
+                // Whatever was waiting in Spotr's queue moves over, in order.
+                let moving: Vec<Track> = std::mem::take(&mut self.queue.items);
+                self.queue.committed = None;
+                if moving.is_empty() {
+                    self.toast(ToastKind::Info, "Spotify's queue — Spotify's radio picks what plays after a searched song");
+                } else {
+                    let n = moving.len();
+                    let dev = self.fallback_device();
+                    let uris: Vec<String> = moving.into_iter().map(|t| t.uri).collect();
+                    self.run(Some(format!("Moved {n} song{} to Spotify's queue", if n == 1 { "" } else { "s" })), move |sp| async move {
+                        for u in &uris {
+                            sp.add_to_queue(u, dev.as_deref()).await?;
+                        }
+                        Ok(())
+                    });
+                }
+            }
+            QueueMode::Spotr => {
+                self.osd(icon, "Spotr queue", None);
+                self.toast(ToastKind::Info, "Spotr's queue — reorder it freely; Spotify's own queue plays after it");
+            }
+        }
+        self.fetch_spotify_queue();
+    }
+
+    /// Skip ahead to song `i` of Spotify's queue.
+    pub fn queue_jump(&mut self, i: usize) {
+        let Some(t) = self.queue.spotify.get(i).cloned() else { return };
+        // The Web API can't pick a song from the queue, but skipping lands on it.
+        let skips = (i + 1).min(30);
+        let dev = self.fallback_device();
+        self.press(Ctl::Next);
+        self.osd(self.theme.icon(crate::theme::Icon::Next), format!("Skipping to “{}”", t.name), None);
+        self.queue.spotify.drain(..skips.min(self.queue.spotify.len()));
+        self.queue.list.selected = 0;
+        self.run(None, move |sp| async move {
+            for _ in 0..skips {
+                sp.next(dev.as_deref()).await?;
+            }
+            Ok(())
+        });
+        self.poll_soon(500);
+    }
+
     pub fn enqueue(&mut self, track: Track) {
         let name = track.name.clone();
+        if self.spotify_queue() {
+            let uri = track.uri.clone();
+            let dev = self.fallback_device();
+            self.osd(self.theme.icon(crate::theme::Icon::Queue), "Added to Spotify's queue", None);
+            self.run(Some(format!("Queued “{name}” on Spotify")), move |sp| async move { sp.add_to_queue(&uri, dev.as_deref()).await });
+            return;
+        }
         self.queue.items.push(track);
         self.osd(self.theme.icon(crate::theme::Icon::Queue), "Added to queue", None);
         self.toast(ToastKind::Success, format!("Queued “{name}” (#{})", self.queue.items.len()));
@@ -380,7 +556,7 @@ impl App {
 
     /// Hand the next Spotr-queue track to Spotify shortly before the current one ends.
     pub(super) fn queue_handoff(&mut self) {
-        if self.queue.items.is_empty() || self.queue.committed.is_some() || !self.pb.is_playing {
+        if self.spotify_queue() || self.offline.is_some() || self.queue.items.is_empty() || self.queue.committed.is_some() || !self.pb.is_playing {
             return;
         }
         let dur = self.pb.duration();
@@ -412,6 +588,7 @@ impl App {
         if let Some(p) = self.local.take() {
             p.shutdown();
             std::thread::spawn(move || drop(p));
+            self.spotify.set_internal(None);
         }
         self.local_status = LocalStatus::Off;
     }
