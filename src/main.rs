@@ -53,7 +53,7 @@ OPTIONS:
     -d, --directory [FOLDER]
                        Play the music files in FOLDER (default: the current folder)
                        instead of Spotify. Spotr offers to set the folder up first.
-                       With offline-only mode on (Settings → Local), plain `spotr`
+                       With local-only mode on (Settings → Local), plain `spotr`
                        always does this.
     --demo             Explore Spotr with a fictional catalog (no account needed)
     --setup            Run the first-time setup again
@@ -314,13 +314,13 @@ async fn run(cfg: Config, paths: Paths, args: Args) -> Result<()> {
         .build()?;
     let images = images::ImageStore::new(picker, paths.cache_dir.join("covers"));
     let mut app = App::new(cfg, paths, tx, http, images, args.demo);
-    // A local library: asked for with -d, offline-only mode (which always acts
+    // A local library: asked for with -d, local-only mode (which always acts
     // like -d), or the current folder is one.
     app.launch_dir = args.directory.clone().or_else(|| {
         if args.demo {
             return None;
         }
-        if app.cfg.general.offline_only {
+        if app.cfg.general.local_only {
             return Some(local_dir(None));
         }
         let cwd = std::env::current_dir().ok()?;

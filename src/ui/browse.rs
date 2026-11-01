@@ -411,8 +411,8 @@ fn top_card(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: 
     let w = inner.right().saturating_sub(x + 1);
     // The card fits a title of up to three lines.
     let font = app.title_font();
-    let font = if font::lines_for(font) > 3 { font::SLIM } else { font };
-    let title_h = crate::font::lines_for(font);
+    let font = if font::rows(item.name(), font) > 3 { font::SLIM } else { font };
+    let title_h = font::rows(item.name(), font);
     let mut y = inner.y + inner.height.saturating_sub(title_h + 3) / 2;
     big_title(app, buf, Rect { x, y, width: w, height: title_h }, item.name(), shown, false, font);
     y += title_h + 1;
@@ -482,12 +482,13 @@ fn page(app: &mut App, buf: &mut Buffer, area: Rect) {
         PageKind::Songs => "ALL SONGS",
     };
     let font = app.title_font();
-    let title_h = crate::font::lines_for(font).min(header_h.saturating_sub(4));
+    let full_h = font::rows(&title, font);
+    let title_h = full_h.min(header_h.saturating_sub(4));
     let content_h = title_h + 4;
     let mut y = header.y + header_h.saturating_sub(content_h) / 2;
     put(buf, x, y, kind_label, app.theme.accent(), w);
     y += 1;
-    let font = if title_h < crate::font::lines_for(font) { font::SLIM } else { font };
+    let font = if title_h < full_h { font::SLIM } else { font };
     let used = big_title(app, buf, Rect { x, y, width: w, height: title_h.max(1) }, &title, opened, false, font);
     y += used + 1;
     put(buf, x, y, &ellipsize(&subtitle, w as usize), app.theme.bold(), w);

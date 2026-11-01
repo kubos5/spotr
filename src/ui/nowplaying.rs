@@ -376,11 +376,30 @@ fn controls(app: &mut App, buf: &mut Buffer, area: Rect, center: bool) {
 /// Nothing is playing.
 fn idle(app: &mut App, buf: &mut Buffer, area: Rect) {
     let font = app.title_font();
-    let th = crate::font::lines_for(font);
+    let th = crate::font::rows("spotr", font);
     let h = th + 6;
     let y0 = area.y + area.height.saturating_sub(h) / 2;
     big_title(app, buf, Rect { x: area.x, y: y0, width: area.width, height: th }, "spotr", app.started, true, font);
-    let lines: Vec<(String, Style)> = vec![
+    // Neither Spotify nor a local library: e.g. local-only mode, after declining to set up the folder.
+    let lines: Vec<(String, Style)> = if !app.online && app.offline.is_none() {
+        vec![
+            ("No music folder open".into(), app.theme.bold()),
+            (String::new(), Style::new()),
+            (
+                format!("`local <folder>` opens a music folder   ·   `online` uses Spotify   ·   {} help", app.keymap.hint(Action::Help, app.theme.unicode)),
+                app.theme.dim(),
+            ),
+            (
+                if app.cfg.general.local_only {
+                    "Local-only mode is on — Settings → Local turns it off".into()
+                } else {
+                    "Start Spotr in a music folder with `spotr -d` to open it right away".into()
+                },
+                app.theme.muted(),
+            ),
+        ]
+    } else {
+        vec![
         (
             match (&app.pb.error, app.pb.loaded) {
                 (Some(e), false) => format!("{} Can't reach Spotify: {e}", app.theme.icon(Icon::Cross)),
@@ -410,7 +429,8 @@ fn idle(app: &mut App, buf: &mut Buffer, area: Rect) {
             },
             app.theme.muted(),
         ),
-    ];
+        ]
+    };
     for (i, (s, style)) in lines.iter().enumerate() {
         let s = ellipsize(s, area.width as usize);
         let y = y0 + th + 1 + i as u16;

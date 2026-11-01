@@ -418,7 +418,7 @@ my_music/
 
 Your music files are never changed. Delete `.spotr/` to reset the library.
 
-**Offline-only mode.** If you don't use Spotify at all, turn on *Settings → Local → Offline-only mode*, or pick **Use offline-only mode** on the Client ID step of the first-time setup. Then plain `spotr` always acts like `spotr -d`: it opens the folder you start it in, and never asks you to sign in to Spotify. `online` still switches to Spotify for that session.
+**Local-only mode.** If you don't use Spotify at all, turn on *Settings → Local → Local-only mode*, or pick **Use local-only mode** on the Client ID step of the first-time setup (it skips the Spotify sign-in and player steps). Then plain `spotr` always acts like `spotr -d`: it opens the folder you start it in, and never asks you to sign in to Spotify. Spotify-only settings are grayed out. `online` still switches to Spotify for that session.
 
 Spotr warns you before setting up your home folder, the root of the disk, or a folder outside your home folder.
 
@@ -463,7 +463,7 @@ While a song plays, Spotr reports it to the operating system:
 - **Linux**: MPRIS over D-Bus
 - **Windows**: not supported yet
 
-Turn it off under *Settings → Player → OS media controls* (applies after a restart) or for just one session with `--no-media`.
+Turn it off under *Settings → Playback → OS media controls* (applies after a restart) or for just one session with `--no-media`.
 
 On macOS this needs an AppKit event loop on the process's main thread, so Spotr runs its UI on a second thread. It has no Dock icon and no windows.
 
@@ -506,7 +506,7 @@ Example config:
 
 ```toml
 [general]
-offline_only = false        # `spotr` always acts like `spotr -d` (no Spotify)
+local_only = false          # `spotr` always acts like `spotr -d` (no Spotify)
 splash = true               # startup animation
 goodbye = true              # closing animation
 
@@ -570,18 +570,18 @@ next = ["f8"]
 
 Built in:
 
-| Font              | Lines | Look                               |
-| ----------------- | ----- | ---------------------------------- |
-| `block` (default) | 3     | Spotr's own chunky half-block font |
-| `slim`            | 2     | A smaller version of `block`       |
-| `ansi-compact`    | 3     | ANSI Compact by Loïc Cressot       |
-| `future`          | 3     | Thin box-drawing letters           |
-| `pagga`           | 3     | Blocks on a shaded background      |
-| `emboss`          | 3     | Heavy box-drawing letters          |
-| `small-block`     | 3–4   | Quadrant blocks                    |
-| `small-braille`   | 2     | Braille dots, the most compact     |
-| `mini`            | 3–4   | Classic FIGlet "Mini"              |
-| `plain`           | 1     | No ASCII art                       |
+| Font                     | Lines | Look                               |
+| ------------------------ | ----- | ---------------------------------- |
+| `ansi-compact` (default) | 3     | ANSI Compact by Loïc Cressot       |
+| `block`                  | 3     | Spotr's own chunky half-block font |
+| `slim`                   | 2     | A smaller version of `block`       |
+| `future`                 | 3     | Thin box-drawing letters           |
+| `pagga`                  | 3     | Blocks on a shaded background      |
+| `emboss`                 | 3     | Heavy box-drawing letters          |
+| `small-block`            | 3–4   | Quadrant blocks                    |
+| `small-braille`          | 2     | Braille dots, the most compact     |
+| `mini`                   | 3–4   | Classic FIGlet "Mini"              |
+| `plain`                  | 1     | No ASCII art                       |
 
 To add your own:
 - navigate to the directory containing the config file

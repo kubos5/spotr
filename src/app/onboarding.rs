@@ -61,7 +61,7 @@ pub enum OnboardClick {
     Row(usize),
     OpenBrowser,
     OpenDashboard,
-    OfflineOnly,
+    LocalOnly,
     Step(usize),
 }
 
@@ -79,6 +79,8 @@ pub struct Onboarding {
     pub only_login: bool,
     pub error: Option<(String, Instant)>,
     pub had_token: bool,
+    /// "Use local-only mode" was picked: the Spotify steps are skipped.
+    pub local_only: bool,
 }
 
 impl Onboarding {
@@ -96,6 +98,7 @@ impl Onboarding {
             only_login: false,
             error: None,
             had_token,
+            local_only: false,
         }
     }
 
@@ -112,6 +115,11 @@ impl Onboarding {
         } else {
             Step::ALL.to_vec()
         }
+    }
+
+    /// Steps that only matter for Spotify, skipped in local-only mode.
+    pub fn skips(&self, s: Step) -> bool {
+        self.local_only && matches!(s, Step::SignIn | Step::Player)
     }
 
     pub fn index(&self) -> usize {
@@ -246,7 +254,10 @@ impl App {
     fn onboarding_go(&mut self, dir: i32) {
         let Some(o) = self.onboarding.as_mut() else { return };
         let steps = o.steps();
-        let i = o.index() as i32 + dir;
+        let mut i = o.index() as i32 + dir;
+        while i >= 0 && (i as usize) < steps.len() && o.skips(steps[i as usize]) {
+            i += dir.signum();
+        }
         if i < 0 {
             return;
         }
@@ -277,10 +288,16 @@ impl App {
         match o.step {
             Step::App => {
                 let id = o.client_id.value.trim().to_string();
+                // Came back to this step after picking local-only: an empty field keeps it.
+                if o.local_only && id.is_empty() {
+                    self.onboarding_go(1);
+                    return;
+                }
                 if !auth::valid_client_id(&id) {
                     o.fail("That doesn't look like a Client ID — it's 32 characters of 0-9 and a-f.");
                     return;
                 }
+                o.local_only = false;
                 if id != self.cfg.general.client_id {
                     // A new app means the old token is useless.
                     o.auth = AuthState::Idle;
@@ -326,31 +343,34 @@ impl App {
         self.onboarding_go(1);
     }
 
-    /// "Use offline-only mode" on the Client ID step: skip Spotify entirely and
-    /// open a local library now (and on every launch).
-    fn choose_offline_only(&mut self) {
-        let dir = self.return_to_local.take().or_else(|| std::env::current_dir().ok());
-        self.onboarding = None;
-        self.cfg.general.offline_only = true;
-        self.cfg.general.onboarded = true;
-        self.save_config();
-        self.needs_clear = true;
-        self.view_changed_at = Instant::now();
-        self.toast(ToastKind::Info, "Offline-only mode — Spotr plays the music files in a folder. Settings → Local turns it off.");
-        match dir {
-            Some(dir) => self.open_local(dir, true),
-            None => self.toast(ToastKind::Error, "Couldn't tell which folder Spotr was started in — `local <folder>` opens one"),
-        }
+    /// "Use local-only mode" on the Client ID step: skip the Spotify steps and
+    /// go on with the rest of the setup.
+    fn choose_local_only(&mut self) {
+        let Some(o) = self.onboarding.as_mut() else { return };
+        o.local_only = true;
+        self.onboarding_go(1);
     }
 
     fn finish_onboarding(&mut self) {
         let only_login = self.onboarding.as_ref().map(|o| o.only_login).unwrap_or(false);
+        let local_only = self.onboarding.as_ref().is_some_and(|o| o.local_only);
         self.onboarding = None;
         self.cfg.general.onboarded = true;
+        if local_only {
+            self.cfg.general.local_only = true;
+        }
         self.save_config();
         self.needs_clear = true;
         self.view_changed_at = Instant::now();
-        if only_login {
+        if local_only {
+            // Open a local library now, as every later launch will.
+            let dir = self.return_to_local.take().or_else(|| std::env::current_dir().ok());
+            self.toast(ToastKind::Success, "All set — Spotr plays the music files in a folder. Settings → Local turns local-only mode off.");
+            match dir {
+                Some(dir) => self.open_local(dir, true),
+                None => self.toast(ToastKind::Error, "Couldn't tell which folder Spotr was started in — `local <folder>` opens one"),
+            }
+        } else if only_login {
             self.toast(ToastKind::Success, "You're signed in");
             self.after_login_light();
         } else {
@@ -446,9 +466,9 @@ impl App {
             }
             return;
         }
-        // Ctrl+L: offline-only mode, from the Client ID step.
+        // Ctrl+L: local-only mode, from the Client ID step.
         if ctrl && k.code == KeyCode::Char('l') && o.step == Step::App && !o.only_login {
-            self.choose_offline_only();
+            self.choose_local_only();
             return;
         }
         // Text fields.
@@ -540,10 +560,10 @@ impl App {
             OnboardClick::OpenDashboard => {
                 let _ = open::that_detached(DASHBOARD_URL);
             }
-            OnboardClick::OfflineOnly => self.choose_offline_only(),
+            OnboardClick::LocalOnly => self.choose_local_only(),
             OnboardClick::Step(i) => {
                 let cur = o.index();
-                if i < cur {
+                if i < cur && !o.steps().get(i).is_some_and(|s| o.skips(*s)) {
                     self.onboarding_go(i as i32 - cur as i32);
                 }
             }

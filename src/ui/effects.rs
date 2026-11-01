@@ -137,7 +137,7 @@ pub fn particles(app: &mut App, buf: &mut Buffer, area: Rect) {
 pub fn splash(app: &mut App, buf: &mut Buffer, area: Rect) {
     let Some(start) = app.splash else { return };
     let t = (start.elapsed().as_secs_f32() / 1.2).min(1.0);
-    let h = crate::font::lines_for(app.title_font()).max(1);
+    let h = crate::font::rows("SPOTR", app.title_font());
     let y = area.y + area.height.saturating_sub(h + 4) / 2;
     let y = y + brand_title(app, buf, Rect { x: area.x, y, width: area.width, height: h }, "SPOTR", start);
     let tag = "a better Spotify client, for the terminal";

@@ -84,7 +84,7 @@ pub enum Id {
     LocalSort,
     LocalLyrics,
     LocalResume,
-    OfflineOnly,
+    LocalOnly,
     LocalRescan,
     LocalMode,
     Key(Action),
@@ -164,6 +164,7 @@ pub fn rows(tab: usize) -> Vec<Row> {
             row(VolumeStep, "Volume step", "Percent per ↑ / ↓.", Number),
             row(SpeedStep, "Speed step", "Speed change per press.", Number),
             row(DigitSeek, "Digits seek", "0–9 jump to 0%–90% of the song.", Toggle),
+            row(MediaControls, "OS media controls", "Show what's playing in Now Playing / MPRIS and accept media keys (applies after a restart).", Toggle),
             row(QueueMode, "Queue", "Spotr: your own queue, reorder it freely. Spotify: Spotify's queue, and Spotify's radio picks what plays after searched songs. Tab in the queue switches.", Choice),
             row(SearchContext, "Songs from search", "With the Spotr queue — Album: keep playing the album. Radio: Spotify picks similar songs. Single: just that song.", Choice),
             row(QueueHandoff, "Queue handoff", "Seconds before a song ends when the next Spotr-queue song is sent to Spotify.", Number),
@@ -189,11 +190,10 @@ pub fn rows(tab: usize) -> Vec<Row> {
             row(Normalisation, "Normalize volume", "Even out loudness between songs.", Toggle),
             row(PlayerLogin, "Sign in built-in player", "One-time browser sign-in, if it asks for one.", Button),
             row(PollInterval, "Sync interval", "Milliseconds between playback state refreshes.", Number),
-            row(MediaControls, "OS media controls", "Show what's playing in Now Playing / MPRIS and accept media keys (applies after a restart).", Toggle),
         ],
         6 => vec![
             row(LocalMode, "Local library", "Play the music files in a folder instead of Spotify (`spotr -d [folder]`, or the `local` command).", Button),
-            row(OfflineOnly, "Offline-only mode", "Launching `spotr` always opens the current folder as a local library, like `spotr -d`.", Toggle),
+            row(LocalOnly, "Local-only mode", "Launching `spotr` always opens the current folder as a local library, like `spotr -d`.", Toggle),
             row(LocalSort, "Sort songs by", "Order of the song list in a local library (also the `sort` command).", Choice),
             row(LocalLyrics, "Lyrics from LRCLIB", "Local songs use .lrc files and embedded lyrics first; this looks online when there are none.", Toggle),
             row(LocalResume, "Offer to resume", "Show where you left off at the top of the library.", Toggle),
@@ -217,11 +217,43 @@ pub fn rows(tab: usize) -> Vec<Row> {
     }
 }
 
+/// Tabs that are all about Spotify, grayed out in local-only mode.
+pub fn spotify_tab(tab: usize) -> bool {
+    matches!(TABS.get(tab), Some(&"Player") | Some(&"Account"))
+}
+
+/// Settings that only do something with Spotify.
+pub fn spotify_only(id: Id) -> bool {
+    use Id::*;
+    matches!(
+        id,
+        LocalPlayer | DeviceName | AutoActivate | Bitrate | Normalisation | PlayerLogin | PollInterval | QueueHandoff | ResultsPerType | SpotifyApp | Relogin | Logout
+    )
+}
+
 fn on_off(b: bool) -> String {
     if b { "on".into() } else { "off".into() }
 }
 
 impl App {
+    /// Local-only mode is on and Spotify isn't in use this session.
+    pub fn spotify_grayed(&self) -> bool {
+        self.cfg.general.local_only && !self.online
+    }
+
+    /// A Spotify setting while local-only mode keeps Spotify away.
+    pub fn setting_disabled(&self, id: Id) -> bool {
+        self.spotify_grayed() && spotify_only(id)
+    }
+
+    fn refuse_disabled(&mut self, id: Id) -> bool {
+        if self.setting_disabled(id) {
+            self.toast(ToastKind::Info, "That's a Spotify setting — local-only mode is on (Settings → Local turns it off)");
+            return true;
+        }
+        false
+    }
+
     pub fn setting_value(&self, id: Id) -> String {
         let c = &self.cfg;
         use Id::*;
@@ -313,7 +345,7 @@ impl App {
             LocalSort => c.local.sort.label().into(),
             LocalLyrics => on_off(c.local.online_lyrics),
             LocalResume => on_off(c.local.resume),
-            OfflineOnly => on_off(c.general.offline_only),
+            LocalOnly => on_off(c.general.local_only),
             LocalRescan => if self.offline.is_some() { "Enter ⏎".into() } else { "local mode only".into() },
             LocalMode => match &self.offline {
                 Some(o) => format!("{} · Enter: back to Spotify", o.name),
@@ -330,6 +362,9 @@ impl App {
 
     /// Left / right on a row.
     pub fn setting_adjust(&mut self, id: Id, dir: i32) {
+        if self.refuse_disabled(id) {
+            return;
+        }
         let c = &mut self.cfg;
         let d = dir as f32;
         use Id::*;
@@ -443,12 +478,12 @@ impl App {
             }
             LocalLyrics => c.local.online_lyrics = !c.local.online_lyrics,
             LocalResume => c.local.resume = !c.local.resume,
-            OfflineOnly => {
-                c.general.offline_only = !c.general.offline_only;
-                let msg = if c.general.offline_only {
-                    "Offline-only: from now on `spotr` opens the folder it's started in as a local library"
+            LocalOnly => {
+                c.general.local_only = !c.general.local_only;
+                let msg = if c.general.local_only {
+                    "Local-only: from now on `spotr` opens the folder it's started in as a local library"
                 } else {
-                    "Offline-only is off: `spotr` starts with Spotify again (`spotr -d` still opens a folder)"
+                    "Local-only is off: `spotr` starts with Spotify again (`spotr -d` still opens a folder)"
                 };
                 self.toast(ToastKind::Info, msg);
             }
@@ -462,6 +497,9 @@ impl App {
 
     /// Enter on a row.
     pub fn setting_activate(&mut self, id: Id) {
+        if self.refuse_disabled(id) {
+            return;
+        }
         use Id::*;
         match id {
             Key(a) => self.settings.capture = Some(a),

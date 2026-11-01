@@ -171,7 +171,7 @@ impl App {
         let Some(p) = self.init_prompt.take() else { return };
         self.set_overlay(Overlay::None);
         if p.at_startup {
-            if !self.cfg.general.offline_only {
+            if !self.cfg.general.local_only {
                 self.toast(ToastKind::Info, "Nothing was set up — `local` opens a music folder any time");
             }
             self.local_launch_failed();
@@ -179,10 +179,10 @@ impl App {
     }
 
     /// The folder Spotr was launched with didn't open: fall back to Spotify,
-    /// unless offline-only mode keeps it away.
+    /// unless local-only mode keeps it away.
     fn local_launch_failed(&mut self) {
-        if self.cfg.general.offline_only && !self.spotify.is_demo() {
-            self.toast(ToastKind::Info, "Offline-only mode — `local <folder>` opens a music folder, `online` uses Spotify");
+        if self.cfg.general.local_only && !self.spotify.is_demo() {
+            self.toast(ToastKind::Info, "Local-only mode — `local <folder>` opens a music folder, `online` uses Spotify");
             return;
         }
         self.start_online();

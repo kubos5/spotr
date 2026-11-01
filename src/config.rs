@@ -136,7 +136,7 @@ pub struct General {
     pub client_id: String,
     /// Never use Spotify: a plain launch opens the current folder as a local
     /// library, as `spotr -d` does.
-    pub offline_only: bool,
+    pub local_only: bool,
     pub redirect_port: u16,
     /// Run the built-in librespot player so Spotr shows up as a Connect device.
     pub local_player: bool,
@@ -269,7 +269,7 @@ impl Default for General {
         Self {
             onboarded: false,
             client_id: String::new(),
-            offline_only: false,
+            local_only: false,
             redirect_port: 8888,
             local_player: cfg!(feature = "local-player"),
             device_name: "Spotr".into(),
@@ -295,7 +295,7 @@ impl Default for Appearance {
             text_art: TextArt::Blocks,
             pixelation: 0,
             show_cover: true,
-            title_font: "block".into(),
+            title_font: crate::font::DEFAULT.into(),
             long_title: LongTitle::Shrink,
             title_shimmer: true,
             big_controls: true,
