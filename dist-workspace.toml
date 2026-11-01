@@ -20,6 +20,10 @@ publish-jobs = ["homebrew"]
 # Whether to install an updater program
 install-updater = false
 
+# GitHub retires the macos-14 runners (dist's default for Apple Silicon) on 2026-11-02.
+[dist.github-custom-runners]
+aarch64-apple-darwin = "macos-15"
+
 # System packages the Linux runners need to build the built-in player (cpal → ALSA).
 [dist.dependencies.apt]
 libasound2-dev = { targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"] }
