@@ -176,7 +176,7 @@ pub fn rows(tab: usize) -> Vec<Row> {
             row(ResultsPerType, "Results per type", "How many of each kind to fetch at a time (Spotify allows at most 10).", Number),
             row(DefaultFilter, "Default filter", "Which tab search opens on.", Choice),
             row(TopResult, "Top result card", "Show the best match as a big card.", Toggle),
-            row(HighlightLiked, "Liked songs in red", "Show the songs you like in red in search results.", Toggle),
+            row(HighlightLiked, "Liked songs in red", "Show the songs you like in red in search results and your local library.", Toggle),
             row(RememberPos, "Remember position", "Reopen search exactly where you left it.", Toggle),
             row(CloseOnPlay, "Close after playing", "Return to the player when you start a song.", Toggle),
         ],

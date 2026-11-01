@@ -378,7 +378,7 @@ fn row(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: bool,
     let heart_w = if liked {
         let heart = th.icon(Icon::Heart);
         put(buf, name_x, rect.y, heart, if selected && focused { base } else { th.liked() }, name_w);
-        (width(heart) + 1).min(name_w)
+        (width(heart) + HEART_GAP).min(name_w)
     } else {
         0
     };
@@ -424,7 +424,7 @@ fn top_card(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: 
     {
         let heart = app.theme.icon(Icon::Heart);
         put(buf, x + kw + 1, y, heart, app.theme.liked(), w.saturating_sub(kw + 1));
-        kw += width(heart) + 1;
+        kw += width(heart) + HEART_GAP;
     }
     put(buf, x + kw + 1, y, &ellipsize(&subtitle(item), w.saturating_sub(kw + 1) as usize), app.theme.dim(), w.saturating_sub(kw + 1));
     y += 1;

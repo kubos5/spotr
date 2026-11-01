@@ -373,7 +373,7 @@ fn track_row(app: &App, buf: &mut Buffer, rect: Rect, i: usize, t: &crate::spoti
     if app.is_liked(t) {
         let heart = th.icon(crate::theme::Icon::Heart);
         put(buf, tx, y, heart, if selected { style } else { th.liked() }, tw);
-        let hw = (width(heart) + 1).min(tw);
+        let hw = (width(heart) + HEART_GAP).min(tw);
         tx += hw;
         tw -= hw;
     }

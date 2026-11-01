@@ -91,7 +91,9 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
         put(buf, area.x + area.width.saturating_sub(width(&sub)) / 2, my + 2, &sub, th.dim(), area.width);
     } else {
         let mut nav = app.offline.as_ref().map(|o| o.home.nav).unwrap_or_default();
-        list(app, buf, list_area, &items, &mut nav, false, None, shown, true, false, Click::HomeRow);
+        // Liked songs in red, except in the Liked Songs tab where they all are.
+        let highlight = app.cfg.search.highlight_liked && tab != HomeTab::Liked;
+        list(app, buf, list_area, &items, &mut nav, false, None, shown, true, highlight, Click::HomeRow);
         if let Some(o) = app.offline.as_mut() {
             o.home.nav = nav;
         }

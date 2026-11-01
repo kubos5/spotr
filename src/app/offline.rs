@@ -25,21 +25,21 @@ pub enum HomeTab {
     Songs,
     Albums,
     Artists,
-    Liked,
     Playlists,
+    Liked,
     Recent,
 }
 
 impl HomeTab {
-    pub const ALL: [HomeTab; 6] = [HomeTab::Songs, HomeTab::Albums, HomeTab::Artists, HomeTab::Liked, HomeTab::Playlists, HomeTab::Recent];
+    pub const ALL: [HomeTab; 6] = [HomeTab::Songs, HomeTab::Albums, HomeTab::Artists, HomeTab::Playlists, HomeTab::Liked, HomeTab::Recent];
 
     pub fn label(self) -> &'static str {
         match self {
             HomeTab::Songs => "Songs",
             HomeTab::Albums => "Albums",
             HomeTab::Artists => "Artists",
-            HomeTab::Liked => "Liked",
             HomeTab::Playlists => "Playlists",
+            HomeTab::Liked => "Liked Songs",
             HomeTab::Recent => "Recent",
         }
     }
@@ -1428,5 +1428,7 @@ mod tests {
     fn home_tabs_cycle() {
         assert_eq!(HomeTab::Songs.cycle(-1), HomeTab::Recent);
         assert_eq!(HomeTab::Recent.cycle(1), HomeTab::Songs);
+        // Liked Songs sits right before Recent.
+        assert_eq!(HomeTab::Recent.cycle(-1), HomeTab::Liked);
     }
 }

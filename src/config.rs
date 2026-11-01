@@ -229,7 +229,7 @@ pub struct Search {
     pub remember_position: bool,
     pub close_on_play: bool,
     pub show_top_result: bool,
-    /// Liked songs in red in search results.
+    /// Liked songs in red in search results and the local library's lists.
     pub highlight_liked: bool,
 }
 

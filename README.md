@@ -279,7 +279,7 @@ In the queue:
 - `Tab` to switch between Spotr's queue and Spotify's queue
 
 In a local library:
-- `Tab` switches the list: Songs, Albums, Artists, Liked, Playlists, Recent
+- `Tab` switches the list: Songs, Albums, Artists, Playlists, Liked Songs, Recent
 - `Enter` plays (the list keeps playing from there), `*` likes, `Ctrl+A` queues
 - `Del` on a local playlist's page removes the song from it
 
@@ -362,7 +362,7 @@ Short aliases include:
 - when searching, use `Tab` / `Shift+Tab` to cycle between
   `All`, `Songs`, `Artists`, `Albums`, `Playlists` and `Liked Songs`
 - the **Liked Songs** tab searches only the songs you like (with nothing typed, it lists them all). Playing one plays your Liked Songs from there
-- songs you like have a `♥` before their title in every list, and show up in red in search results (*Settings → Search → Liked songs in red*)
+- songs you like have a `♥` before their title in every list, and show up in red in search results and your local library (*Settings → Search → Liked songs in red*)
 - you can paste a Spotify link anywhere (outside a text field) to play it.
 
 ### Queue
@@ -419,7 +419,7 @@ Once a folder has a `.spotr/` folder, launching `spotr` inside it opens it as a 
 
 Instead of "Nothing is playing", a local library shows its songs:
 
-- `Tab` switches between **Songs**, **Albums**, **Artists**, **Liked**, **Playlists** and **Recent**
+- `Tab` switches between **Songs**, **Albums**, **Artists**, **Playlists**, **Liked Songs** and **Recent**
 - `Enter` plays, and the list keeps playing from there; `*` likes or unlikes; `Ctrl+A` queues
 - **Continue** at the top picks up where you left off (song, position, queue and shuffle)
 - `sort title` (or `artist`, `album`, `added`, `plays`, `length`) orders the songs
@@ -542,7 +542,7 @@ font = ""                   # "" = same as title_font
 [search]
 live = true
 default_filter = "all"      # all | tracks | artists | albums | playlists | liked
-highlight_liked = true      # liked songs in red in search results
+highlight_liked = true      # liked songs in red in search results and the local library
 remember_position = true
 close_on_play = true
 

@@ -45,7 +45,7 @@ pub fn help(app: &mut App, buf: &mut Buffer, area: Rect) {
         ("⌫ / Esc", "Back to the previous page / close"),
         ("Tab", "Search: next filter · Settings: next tab · Command bar: complete"),
         ("Tab (queue)", "Switch between Spotr's queue and Spotify's queue"),
-        ("Tab (library)", "Local library: Songs · Albums · Artists · Liked · Playlists · Recent"),
+        ("Tab (library)", "Local library: Songs · Albums · Artists · Playlists · Liked Songs · Recent"),
         ("⇧↑ ⇧↓", "Queue: move the selected song"),
         ("Del", "Queue: remove the selected song · local playlist: remove it from the playlist"),
         ("Ctrl+W  Ctrl+U  Alt+←→", "Text fields: delete word / line, jump words"),

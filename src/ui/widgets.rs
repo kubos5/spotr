@@ -16,6 +16,9 @@ use crate::font::FontId;
 use crate::font;
 use crate::spotify::models::fmt_duration;
 
+/// Cells between a liked song's heart and its title.
+pub const HEART_GAP: u16 = 2;
+
 /// Write a string clipped to `max` cells. Returns the width written.
 pub fn put(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style, max: u16) -> u16 {
     if max == 0 || y >= buf.area.bottom() || x >= buf.area.right() {
