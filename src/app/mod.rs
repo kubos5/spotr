@@ -3,6 +3,7 @@
 mod browse;
 mod exec;
 mod input;
+mod liked;
 pub mod offline;
 pub mod onboarding;
 mod playback;
@@ -71,6 +72,10 @@ pub enum AppEvent {
     PlaySearched(Track),
     /// Local files mode: scanning and the audio engine.
     Offline(OfflineEvent),
+    /// Loading your Liked Songs.
+    Liked(liked::LikedEvent),
+    /// Spotify refused a like / unlike made here: undo it.
+    LikeFailed { track: Track, like: bool, error: String },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -465,6 +470,8 @@ pub struct App {
     pub online_queue: Vec<Track>,
     /// The library left for Spotify, while Spotify still needs setting up.
     pub return_to_local: Option<PathBuf>,
+    /// Your Liked Songs on Spotify.
+    pub liked: liked::Liked,
 }
 
 /// What we last told the OS, to only send changes.
@@ -584,6 +591,7 @@ impl App {
             online: false,
             online_queue: Vec::new(),
             return_to_local: None,
+            liked: Default::default(),
             cfg,
             paths,
         }
@@ -898,6 +906,7 @@ impl App {
             AppEvent::Saved { track_id, saved } => {
                 if self.pb.track.as_ref().and_then(|t| t.id.as_deref()) == Some(track_id.as_str()) {
                     self.saved_current = Some(saved);
+                    self.liked_reconcile(saved);
                 }
             }
             AppEvent::Image { url, result } => match result {
@@ -922,6 +931,7 @@ impl App {
             AppEvent::Auth(r) => self.on_auth(r),
             AppEvent::User(u) => {
                 self.user = Some(u.clone());
+                self.load_liked(&u.id);
                 if u.product.as_deref().is_some_and(|p| p != "premium") {
                     self.toast(
                         ToastKind::Warn,
@@ -998,6 +1008,14 @@ impl App {
                 self.play_searched(&t);
             }
             AppEvent::Offline(e) => self.on_offline_event(e),
+            AppEvent::Liked(e) => self.on_liked_event(e),
+            AppEvent::LikeFailed { track, like, error } => {
+                self.liked_changed(&track, !like);
+                if self.pb.track.as_ref().is_some_and(|t| t.uri == track.uri) {
+                    self.saved_current = Some(!like);
+                }
+                self.toast(ToastKind::Error, format!("Couldn't update Liked Songs: {error}"));
+            }
         }
     }
 
@@ -1288,6 +1306,7 @@ impl App {
         if self.volume_save_at.take().is_some() {
             self.save_config();
         }
+        self.save_liked(true);
         if self.offline.is_some() {
             self.close_offline();
         }

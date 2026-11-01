@@ -361,7 +361,14 @@ impl App {
             if like { "Liked" } else { "Unliked" },
             None,
         );
-        self.run(Some(msg), move |sp| async move { sp.set_saved(&id, like).await });
+        self.liked_changed(&track, like);
+        let sp = self.spotify.clone();
+        self.spawn(async move {
+            match sp.set_saved(&id, like).await {
+                Ok(()) => AppEvent::Done { ok: Some(msg), err: None, refresh: false },
+                Err(e) => AppEvent::LikeFailed { track, like, error: e.to_string() },
+            }
+        });
     }
 
     pub fn toggle_like_current(&mut self) {

@@ -199,15 +199,8 @@ impl App {
                     None
                 };
                 if let Some(Item::Track(t)) = selected {
-                    let current = self.pb.track.as_ref().map(|c| c.uri == t.uri).unwrap_or(false);
-                    let like = if current {
-                        !self.saved_current.unwrap_or(false)
-                    } else if self.offline.is_some() {
-                        // Local likes are known for every song, so * toggles.
-                        !self.local_liked(&t.uri)
-                    } else {
-                        true
-                    };
+                    // Liked Songs are known for every song, so * toggles.
+                    let like = !self.is_liked(&t);
                     self.set_liked(Some(t), like);
                     return;
                 }

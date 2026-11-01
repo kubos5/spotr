@@ -533,6 +533,7 @@ impl App {
                 let sp = self.spotify.clone();
                 tokio::spawn(async move { sp.logout().await });
                 self.user = None;
+                self.liked = Default::default();
                 Ok(Some("Signed out. Run `login` to sign in again.".into()))
             }
             "whoami" => {

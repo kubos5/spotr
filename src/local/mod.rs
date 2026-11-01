@@ -124,6 +124,38 @@ pub fn search(lib: &Library, store: &Store, query: &str) -> SearchResults {
     SearchResults { totals: [r.tracks.len() as u32, r.artists.len() as u32, r.albums.len() as u32, r.playlists.len() as u32], ..r }
 }
 
+/// The songs in `tracks` matching every word of `query` (in the title, artists or
+/// album), best first; ties keep their order. An empty query keeps them all.
+pub fn filter_tracks(tracks: &[Track], query: &str) -> Vec<usize> {
+    let q = norm(query);
+    let words: Vec<String> = q.split_whitespace().map(String::from).collect();
+    if words.is_empty() {
+        return (0..tracks.len()).collect();
+    }
+    let mut found: Vec<(i64, usize)> = tracks
+        .iter()
+        .enumerate()
+        .filter_map(|(i, t)| {
+            let title = norm(&t.name);
+            let base = word_score(&format!("{title} {} {}", norm(&t.artist_names()), norm(t.album_name())), &words)?;
+            let bonus = if title == q {
+                400
+            } else if title.starts_with(&q) {
+                200
+            } else {
+                word_score(&title, &words).map(|s| s * 20).unwrap_or(0)
+            };
+            Some((base + bonus, i))
+        })
+        .collect();
+    // Nothing matched word by word: try a looser match on titles (typos, missing spaces).
+    if found.is_empty() && q.len() >= 3 {
+        found = tracks.iter().enumerate().filter(|(_, t)| subsequence(&norm(&t.name), &q)).map(|(i, _)| (1, i)).collect();
+    }
+    found.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    found.into_iter().map(|(_, i)| i).collect()
+}
+
 /// A local playlist as Spotr's playlist model.
 pub fn playlist_model(p: &store::LocalPlaylist) -> Playlist {
     Playlist {
@@ -168,5 +200,19 @@ mod tests {
         assert_eq!(search(&lib, &store, "bhmnrhpsdy").tracks[0].name, "Bohemian Rhapsody");
         assert_eq!(search(&lib, &store, "opera").albums.len(), 1);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn filters_a_list_of_songs() {
+        let t = |name: &str, artist: &str| Track { name: name.into(), artists: vec![SimpleArtist { name: artist.into(), ..Default::default() }], ..Default::default() };
+        let tracks = [t("Under Pressure", "Queen"), t("Pressure", "Billy Joel"), t("Somebody to Love", "Queen"), t("Café", "Zoë")];
+        assert_eq!(filter_tracks(&tracks, ""), vec![0, 1, 2, 3]);
+        // The exact title first, then the rest in their order.
+        assert_eq!(filter_tracks(&tracks, "pressure"), vec![1, 0]);
+        assert_eq!(filter_tracks(&tracks, "queen"), vec![0, 2]);
+        assert_eq!(filter_tracks(&tracks, "queen love"), vec![2]);
+        assert_eq!(filter_tracks(&tracks, "cafe"), vec![3]);
+        assert_eq!(filter_tracks(&tracks, "smbdy"), vec![2]);
+        assert!(filter_tracks(&tracks, "nothing like this").is_empty());
     }
 }

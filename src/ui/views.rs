@@ -368,8 +368,16 @@ fn track_row(app: &App, buf: &mut Buffer, rect: Rect, i: usize, t: &crate::spoti
     put(buf, x, y, &format!("{:>3}", i + 1), if selected { style } else { th.muted() }, 4);
     let dur = fmt_duration(t.duration_ms);
     let text = format!("{} — {}", t.name, t.artist_names());
-    let tx = x + 5 + if nudged { 1 } else { 0 };
-    put(buf, tx, y, &ellipsize(&text, w.saturating_sub(12) as usize), if selected { style } else { th.bold() }, w.saturating_sub(12));
+    let mut tx = x + 5 + if nudged { 1 } else { 0 };
+    let mut tw = w.saturating_sub(12);
+    if app.is_liked(t) {
+        let heart = th.icon(crate::theme::Icon::Heart);
+        put(buf, tx, y, heart, if selected { style } else { th.liked() }, tw);
+        let hw = (width(heart) + 1).min(tw);
+        tx += hw;
+        tw -= hw;
+    }
+    put(buf, tx, y, &ellipsize(&text, tw as usize), if selected { style } else { th.bold() }, tw);
     put(buf, (x + w).saturating_sub(width(&dur) + 1), y, &dur, if selected { style } else { th.dim() }, 6);
 }
 

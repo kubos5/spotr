@@ -68,8 +68,8 @@ impl App {
             self.search_open = true;
             self.search.shown_at = Instant::now();
             self.needs_clear = true;
-            // A local library shows everything before you type.
-            if self.offline.is_some() && self.search.input.is_empty() && self.search.items.is_empty() {
+            // A local library (and the Liked Songs tab) shows everything before you type.
+            if (self.offline.is_some() || self.search.filter == SearchFilter::Liked) && self.search.input.is_empty() && self.search.items.is_empty() {
                 self.run_search(false);
             }
         }
@@ -110,6 +110,20 @@ impl App {
 
     pub fn run_search(&mut self, append: bool) {
         let q = self.search.input.value.trim().to_string();
+        if self.search.filter == SearchFilter::Liked {
+            // Searched here, in the list of your Liked Songs.
+            if append {
+                return;
+            }
+            self.search.seq += 1;
+            let r = self.liked_search(&q);
+            self.search.query = q;
+            self.search.error = None;
+            self.search.loading = false;
+            let seq = self.search.seq;
+            self.on_search_results(seq, false, Ok(r));
+            return;
+        }
         if self.offline.is_some() {
             if append {
                 return;
@@ -141,6 +155,7 @@ impl App {
             SearchFilter::Artists => vec!["artist"],
             SearchFilter::Albums => vec!["album"],
             SearchFilter::Playlists => vec!["playlist"],
+            SearchFilter::Liked => unreachable!("searched locally"),
         };
         let limit = self.cfg.search.results_per_type;
         let offset = if append { self.search_count_of(filter) as u32 } else { 0 };
@@ -163,7 +178,7 @@ impl App {
     fn search_count_of(&self, f: SearchFilter) -> usize {
         let r = &self.search.results;
         match f {
-            SearchFilter::Tracks => r.tracks.len(),
+            SearchFilter::Tracks | SearchFilter::Liked => r.tracks.len(),
             SearchFilter::Artists => r.artists.len(),
             SearchFilter::Albums => r.albums.len(),
             SearchFilter::Playlists => r.playlists.len(),
@@ -229,17 +244,18 @@ impl App {
                     }
                 }
             }
-            SearchFilter::Tracks => items.extend(r.tracks.iter().cloned().map(Item::Track)),
+            SearchFilter::Tracks | SearchFilter::Liked => items.extend(r.tracks.iter().cloned().map(Item::Track)),
             SearchFilter::Artists => items.extend(r.artists.iter().cloned().map(Item::Artist)),
             SearchFilter::Albums => items.extend(r.albums.iter().cloned().map(Item::Album)),
             SearchFilter::Playlists => items.extend(r.playlists.iter().cloned().map(Item::Playlist)),
         }
+        // Which count says whether Spotify has more (none: everything is here).
         let idx = match f {
             SearchFilter::Tracks => 0,
             SearchFilter::Artists => 1,
             SearchFilter::Albums => 2,
             SearchFilter::Playlists => 3,
-            SearchFilter::All => 4,
+            SearchFilter::All | SearchFilter::Liked => 4,
         };
         self.search.has_more = idx < 4 && (self.search_count_of(f) as u32) < r.totals[idx];
         self.search.items = items;
@@ -250,12 +266,23 @@ impl App {
         if self.search.filter == f {
             return;
         }
+        let was_liked = self.search.filter == SearchFilter::Liked;
         self.search.filter = f;
         self.search.shown_at = Instant::now();
         // Re-query so single-type filters get a full page of results.
         let q = std::mem::take(&mut self.search.query);
         self.search.stack.clear();
-        if q.is_empty() {
+        if f == SearchFilter::Liked {
+            self.liked_tab_opened();
+        }
+        // Local searches (and the Liked Songs tab) list everything for an empty query.
+        let lists_all = self.offline.is_some() || f == SearchFilter::Liked;
+        if q.is_empty() && !lists_all {
+            if was_liked {
+                self.search.results = SearchResults::default();
+                self.search.items.clear();
+                self.search.list = ListNav::default();
+            }
             return;
         }
         self.search.input.set(&q);
@@ -420,6 +447,7 @@ impl App {
                     .collect();
                 self.play_request(PlayRequest { uris: Some(uris), offset_uri: Some(t.uri.clone()), ..Default::default() }, label);
             }
+            None if self.search.filter == SearchFilter::Liked => self.play_liked_from(t),
             None => self.play_searched(t),
         }
     }

@@ -111,7 +111,7 @@ cycle_enum!(SearchContext { Album => "Album", Radio => "Radio", Single => "Singl
 cycle_enum!(QueueMode { Spotr => "Spotr", Spotify => "Spotify" });
 // How the local library's song list is ordered.
 cycle_enum!(SongSort { Artist => "Artist", Title => "Title", Album => "Album", Added => "Recently added", Plays => "Most played", Duration => "Length" });
-cycle_enum!(SearchFilter { All => "All", Tracks => "Tracks", Artists => "Artists", Albums => "Albums", Playlists => "Playlists" });
+cycle_enum!(SearchFilter { All => "All", Tracks => "Tracks", Artists => "Artists", Albums => "Albums", Playlists => "Playlists", Liked => "Liked Songs" });
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -229,6 +229,8 @@ pub struct Search {
     pub remember_position: bool,
     pub close_on_play: bool,
     pub show_top_result: bool,
+    /// Liked songs in red in search results.
+    pub highlight_liked: bool,
 }
 
 /// Local files mode (`spotr -d`).
@@ -352,6 +354,7 @@ impl Default for Search {
             remember_position: true,
             close_on_play: true,
             show_top_result: true,
+            highlight_liked: true,
         }
     }
 }

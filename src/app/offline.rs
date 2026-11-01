@@ -696,6 +696,7 @@ impl App {
         if self.offline.as_ref().is_some_and(|o| o.home.tab == HomeTab::Liked) {
             self.rebuild_home(false);
         }
+        self.liked_changed(&track, like);
         if self.search.stack.last().is_some_and(|p| p.kind == PageKind::Liked) {
             self.search.stack.pop();
             self.off_open_liked();
@@ -919,7 +920,7 @@ impl App {
         self.off_page(PageKind::Playlist, data);
     }
 
-    fn liked_tracks(&self) -> Vec<Track> {
+    pub(super) fn liked_tracks(&self) -> Vec<Track> {
         let Some(off) = self.offline.as_ref() else { return Vec::new() };
         let mut liked: Vec<(&String, &u64)> = off.store.data.liked.iter().collect();
         liked.sort_by_key(|(_, at)| std::cmp::Reverse(**at));

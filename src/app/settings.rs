@@ -72,6 +72,7 @@ pub enum Id {
     TopResult,
     RememberPos,
     CloseOnPlay,
+    HighlightLiked,
     LocalPlayer,
     DeviceName,
     AutoActivate,
@@ -175,6 +176,7 @@ pub fn rows(tab: usize) -> Vec<Row> {
             row(ResultsPerType, "Results per type", "How many of each kind to fetch at a time (Spotify allows at most 10).", Number),
             row(DefaultFilter, "Default filter", "Which tab search opens on.", Choice),
             row(TopResult, "Top result card", "Show the best match as a big card.", Toggle),
+            row(HighlightLiked, "Liked songs in red", "Show the songs you like in red in search results.", Toggle),
             row(RememberPos, "Remember position", "Reopen search exactly where you left it.", Toggle),
             row(CloseOnPlay, "Close after playing", "Return to the player when you start a song.", Toggle),
         ],
@@ -282,6 +284,7 @@ impl App {
             ResultsPerType => c.search.results_per_type.to_string(),
             DefaultFilter => c.search.default_filter.label().into(),
             TopResult => on_off(c.search.show_top_result),
+            HighlightLiked => on_off(c.search.highlight_liked),
             RememberPos => on_off(c.search.remember_position),
             CloseOnPlay => on_off(c.search.close_on_play),
             LocalPlayer => {
@@ -401,6 +404,7 @@ impl App {
             ResultsPerType => c.search.results_per_type = (c.search.results_per_type as i32 + dir).clamp(3, 10) as u32,
             DefaultFilter => c.search.default_filter = c.search.default_filter.cycle(dir),
             TopResult => c.search.show_top_result = !c.search.show_top_result,
+            HighlightLiked => c.search.highlight_liked = !c.search.highlight_liked,
             RememberPos => c.search.remember_position = !c.search.remember_position,
             CloseOnPlay => c.search.close_on_play = !c.search.close_on_play,
             LocalPlayer => {

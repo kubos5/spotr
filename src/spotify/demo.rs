@@ -272,18 +272,19 @@ impl Demo {
             progress_ms: s.progress_ms,
             is_playing: s.playing,
             item: Some(self.tracks[s.track].clone()),
-            context: s.context.clone().map(|uri| Context { uri, kind: "album".into() }),
+            context: s.context.clone().map(|uri| Context { kind: uri.split(':').nth(1).unwrap_or("album").into(), uri }),
         })
     }
 
     pub fn play(&self, ctx: Option<String>, uris: Option<Vec<String>>, offset: Option<String>, offset_pos: Option<u32>) {
         self.tick();
-        let mut s = self.state.lock().unwrap();
+        // Before locking: Liked Songs looks at the state too.
         let list: Vec<usize> = match (&ctx, &uris) {
             (Some(c), _) => self.context_list(c),
             (None, Some(u)) => u.iter().filter_map(|u| self.idx(u)).collect(),
             _ => Vec::new(),
         };
+        let mut s = self.state.lock().unwrap();
         if !list.is_empty() {
             let start = offset
                 .as_deref()

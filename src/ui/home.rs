@@ -81,7 +81,7 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
 
     // The list, with a key reminder underneath.
     let list_area = Rect { x: area.x.saturating_sub(1), y, width: area.width + 1, height: area.bottom().saturating_sub(y + 1) };
-    let items = app.offline.as_ref().map(|o| o.home.items.clone()).unwrap_or_default();
+    let items = app.offline.as_mut().map(|o| std::mem::take(&mut o.home.items)).unwrap_or_default();
     if items.is_empty() {
         let (msg, sub) = empty_message(app, tab, songs, scanning.is_some() && !scanned);
         let my = list_area.y + list_area.height / 3;
@@ -91,10 +91,13 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
         put(buf, area.x + area.width.saturating_sub(width(&sub)) / 2, my + 2, &sub, th.dim(), area.width);
     } else {
         let mut nav = app.offline.as_ref().map(|o| o.home.nav).unwrap_or_default();
-        list(app, buf, list_area, &items, &mut nav, false, None, shown, true, Click::HomeRow);
+        list(app, buf, list_area, &items, &mut nav, false, None, shown, true, false, Click::HomeRow);
         if let Some(o) = app.offline.as_mut() {
             o.home.nav = nav;
         }
+    }
+    if let Some(o) = app.offline.as_mut() {
+        o.home.items = items;
     }
     let u = th.unicode;
     let keys = format!(

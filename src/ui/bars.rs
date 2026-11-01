@@ -26,7 +26,11 @@ pub fn search_bar(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Opti
             format!("{} searching", app.theme.spinner(app.frame))
         } else if !app.search.query.is_empty() && app.search.stack.is_empty() && app.search.error.is_none() {
             let n = app.search.items.iter().filter(|i| i.is_selectable()).count();
-            format!("{n} results")
+            if n == 1 { "1 result".into() } else { format!("{n} results") }
+        } else if app.search.filter == crate::config::SearchFilter::Liked && app.search.stack.is_empty() && !app.search.items.is_empty() {
+            // The Liked Songs tab lists them all before you type.
+            let n = app.search.items.len();
+            if n == 1 { "1 liked song".into() } else { format!("{n} liked songs") }
         } else {
             String::new()
         }

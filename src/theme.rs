@@ -86,6 +86,10 @@ impl Theme {
     pub fn error(&self) -> Style {
         Style::new().fg(Color::Red).add_modifier(Modifier::BOLD)
     }
+    /// Hearts, and liked songs in search results.
+    pub fn liked(&self) -> Style {
+        Style::new().fg(Color::Red)
+    }
     pub fn success(&self) -> Style {
         Style::new().fg(Color::Green)
     }

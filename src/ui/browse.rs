@@ -73,6 +73,11 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
         return;
     }
     let s = &app.search;
+    let liked_tab = s.filter == SearchFilter::Liked;
+    if s.items.is_empty() && liked_tab {
+        liked_empty(app, buf, area);
+        return;
+    }
     if s.items.is_empty() {
         let (msg, style) = if s.loading {
             (format!("{} Searching for “{}”…", app.theme.spinner(app.frame), s.input.value.trim()), app.theme.dim())
@@ -88,17 +93,53 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
         put(buf, area.x + (area.width - width(&msg)) / 2, area.y + area.height / 3, &msg, style, area.width);
         return;
     }
-    // Spotify (and local search) rank a top result; an empty local query lists everything.
-    let big_first = app.cfg.search.show_top_result && !(app.offline.is_some() && app.search.query.is_empty());
-    let items = app.search.items.clone();
+    // Spotify (and local search) rank a top result; an empty query that lists
+    // everything (a local library, Liked Songs) has none.
+    let big_first = app.cfg.search.show_top_result && !app.search.query.is_empty();
+    // Liked songs stand out in results (but not in the list of them).
+    let highlight = app.cfg.search.highlight_liked && !liked_tab;
+    let items = std::mem::take(&mut app.search.items);
     let mut nav = app.search.list;
     let shown = app.search.shown_at;
     let focused = app.focus == Focus::SearchList;
-    list(app, buf, area, &items, &mut nav, big_first, None, shown, focused, Click::Row);
+    list(app, buf, area, &items, &mut nav, big_first, None, shown, focused, highlight, Click::Row);
+    app.search.items = items;
     app.search.list = nav;
-    if app.search.loading_more {
-        let msg = format!("{} loading more", app.theme.spinner(app.frame));
+    let more = if app.search.loading_more {
+        Some("loading more".to_string())
+    } else if let (true, Some((got, of))) = (liked_tab && app.offline.is_none(), app.liked.loading) {
+        // Liked Songs are still arriving (the first time).
+        (!app.liked.ready).then(|| format!("loading your Liked Songs {got}/{of}"))
+    } else {
+        None
+    };
+    if let Some(m) = more {
+        let msg = format!("{} {m}", app.theme.spinner(app.frame));
         put(buf, area.right().saturating_sub(width(&msg) + 1), area.bottom() - 1, &msg, app.theme.dim(), area.width);
+    }
+}
+
+/// The Liked Songs tab with nothing to show.
+fn liked_empty(app: &mut App, buf: &mut Buffer, area: Rect) {
+    let th = app.theme.clone();
+    let q = app.search.query.clone();
+    let l = &app.liked;
+    let (title, hint, style) = if app.offline.is_none() && !l.ready && l.loading.is_some() {
+        (format!("{} Loading your Liked Songs…", th.spinner(app.frame)), String::new(), th.dim())
+    } else if let (false, Some(e)) = (app.offline.is_some() || l.ready, &l.error) {
+        (format!("{} Couldn't load your Liked Songs: {e}", th.icon(Icon::Cross)), "Switch tabs to try again".into(), th.error())
+    } else if app.offline.is_none() && l.user.is_none() && !l.ready {
+        ("Your Liked Songs show up here once you're signed in".into(), String::new(), th.dim())
+    } else if !q.is_empty() {
+        (format!("No liked songs match “{q}”"), "The other tabs search all of Spotify".into(), th.dim())
+    } else {
+        (format!("{} No liked songs yet", th.icon(Icon::HeartEmpty)), "Press * on a song to like it".into(), th.dim())
+    };
+    let hint = if app.offline.is_some() && hint.starts_with("The other") { "The other tabs search the whole library".into() } else { hint };
+    let y = area.y + area.height / 3;
+    for (i, (text, st)) in [(title, style), (hint, th.muted())].into_iter().enumerate() {
+        let text = ellipsize(&text, area.width as usize);
+        put(buf, area.x + area.width.saturating_sub(width(&text)) / 2, y + i as u16 * 2, &text, st, area.width);
     }
 }
 
@@ -135,7 +176,7 @@ fn row_height(i: usize, big_first: bool) -> u16 {
 }
 
 /// Draw a scrolling list. `numbers`: show track numbers (album pages).
-/// `click` makes the mouse target for row `i`.
+/// `highlight_liked`: liked songs in red. `click` makes the mouse target for row `i`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn list(
     app: &mut App,
@@ -147,6 +188,7 @@ pub(super) fn list(
     numbers: Option<PageKind>,
     shown: Instant,
     focused: bool,
+    highlight_liked: bool,
     click: fn(usize) -> Click,
 ) {
     let sel = nav.selected.min(items.len().saturating_sub(1));
@@ -195,7 +237,7 @@ pub(super) fn list(
         if i == 0 && big_first {
             top_card(app, buf, rect, item, selected && focused, shown);
         } else {
-            row(app, buf, rect, item, selected, focused, slide, t < 1.0, playing_uri.as_deref(), numbers.map(|_| track_no));
+            row(app, buf, rect, item, selected, focused, slide, t < 1.0, playing_uri.as_deref(), numbers.map(|_| track_no), highlight_liked);
         }
         if item.is_selectable() {
             app.clicks.push((rect, click(i)));
@@ -269,7 +311,7 @@ fn subtitle(item: &Item) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn row(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: bool, focused: bool, slide: u16, entering: bool, playing: Option<&str>, number: Option<usize>) {
+fn row(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: bool, focused: bool, slide: u16, entering: bool, playing: Option<&str>, number: Option<usize>, highlight_liked: bool) {
     let th = app.theme.clone();
     if let Item::Header(h) = item {
         let label = format!(" {h} ");
@@ -316,17 +358,32 @@ fn row(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: bool,
     let avail = w.saturating_sub(6 + rw + 2);
     let name_w = (avail as f32 * 0.55) as u16;
     let mut name = item.name().to_string();
+    let mut liked = false;
     if let Item::Track(t) = item {
         if t.explicit {
             name = format!("{name} {}", th.icon(Icon::Explicit));
         }
-        // Local likes are known for every row, so show them.
-        if t.is_local && app.local_liked(&t.uri) {
-            name = format!("{name} {}", th.icon(Icon::Heart));
-        }
+        liked = app.is_liked(t);
     }
-    let name_style = if selected && focused { base } else if is_playing { th.accent_bold() } else { base.add_modifier(Modifier::BOLD) };
-    let nw = put(buf, name_x, rect.y, &ellipsize(&name, name_w as usize), name_style, name_w);
+    let name_style = if selected && focused {
+        base
+    } else if is_playing {
+        th.accent_bold()
+    } else if liked && highlight_liked {
+        th.liked().add_modifier(Modifier::BOLD)
+    } else {
+        base.add_modifier(Modifier::BOLD)
+    };
+    // Liked songs start with a heart.
+    let heart_w = if liked {
+        let heart = th.icon(Icon::Heart);
+        put(buf, name_x, rect.y, heart, if selected && focused { base } else { th.liked() }, name_w);
+        (width(heart) + 1).min(name_w)
+    } else {
+        0
+    };
+    let title_w = name_w - heart_w;
+    let nw = put(buf, name_x + heart_w, rect.y, &ellipsize(&name, title_w as usize), name_style, title_w);
     let sub = match (item, number.is_some()) {
         // Album pages: the album is already in the header.
         (Item::Track(t), true) if app.search.stack.last().map(|p| p.kind) == Some(PageKind::Album) => t.artist_names(),
@@ -360,8 +417,15 @@ fn top_card(app: &mut App, buf: &mut Buffer, rect: Rect, item: &Item, selected: 
     big_title(app, buf, Rect { x, y, width: w, height: title_h }, item.name(), shown, false, font);
     y += title_h + 1;
     let kind = item.kind().to_uppercase();
-    let kw = width(&kind) + 2;
+    let mut kw = width(&kind) + 2;
     put(buf, x, y, &format!(" {kind} "), app.theme.selected(), kw);
+    if let Item::Track(t) = item
+        && app.is_liked(t)
+    {
+        let heart = app.theme.icon(Icon::Heart);
+        put(buf, x + kw + 1, y, heart, app.theme.liked(), w.saturating_sub(kw + 1));
+        kw += width(heart) + 1;
+    }
     put(buf, x + kw + 1, y, &ellipsize(&subtitle(item), w.saturating_sub(kw + 1) as usize), app.theme.dim(), w.saturating_sub(kw + 1));
     y += 1;
     if y < inner.bottom() {
@@ -439,13 +503,14 @@ fn page(app: &mut App, buf: &mut Buffer, area: Rect) {
         put(buf, list_area.x + 2, list_area.y, &format!("{} {e}", app.theme.icon(Icon::Cross)), app.theme.error(), list_area.width);
         return;
     }
-    let p = app.search.stack.last().unwrap();
-    let items = p.items.clone();
+    let p = app.search.stack.last_mut().unwrap();
+    let items = std::mem::take(&mut p.items);
     let mut nav = p.list;
     let numbers = if matches!(kind, PageKind::Album | PageKind::Playlist | PageKind::Liked | PageKind::Songs) { Some(kind) } else { None };
     let focused = app.focus == Focus::SearchList;
-    list(app, buf, list_area, &items, &mut nav, false, numbers, opened, focused, Click::Row);
+    list(app, buf, list_area, &items, &mut nav, false, numbers, opened, focused, false, Click::Row);
     if let Some(p) = app.search.stack.last_mut() {
+        p.items = items;
         p.list = nav;
     }
 }
