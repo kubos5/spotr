@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 
 use super::widgets::*;
 use crate::anim;
-use crate::app::settings::{Kind, TABS, rows};
+use crate::app::settings::{Kind, TABS, rows, spotify_tab};
 use crate::app::{App, Click, LocalStatus};
 use crate::commands::COMMANDS;
 use crate::keys::Action;
@@ -112,7 +112,13 @@ pub fn settings(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Option
         if x + w > inner.right() {
             break;
         }
-        let style = if i == app.settings.tab { th.selected() } else { th.dim() };
+        let style = if i == app.settings.tab {
+            th.selected()
+        } else if app.spotify_grayed() && spotify_tab(i) {
+            th.disabled()
+        } else {
+            th.dim()
+        };
         put(buf, x, inner.y, &format!(" {t} "), style, w);
         app.clicks.push((Rect { x, y: inner.y, width: w, height: 1 }, Click::SettingsTab(i)));
         x += w + 1;
@@ -140,10 +146,16 @@ pub fn settings(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Option
         let y = list.y + (i - scroll) as u16;
         let rect = Rect { x: list.x, y, width: list.width, height: 1 };
         let selected = i == sel;
+        let off = app.setting_disabled(row.id);
         if selected {
             fill(buf, rect, th.selected());
         }
-        let base = if selected { th.selected() } else { Style::new() };
+        let base = match (selected, off) {
+            (true, false) => th.selected(),
+            (true, true) => th.selected().add_modifier(Modifier::DIM),
+            (false, true) => th.disabled(),
+            (false, false) => Style::new(),
+        };
         put(buf, list.x + 1, y, if selected { th.icon(Icon::Pointer) } else { " " }, base, 1);
         put(buf, list.x + 3, y, &ellipsize(&row.label, label_w as usize), base, label_w);
         let vx = list.x + 4 + label_w;
@@ -167,9 +179,9 @@ pub fn settings(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Option
                 Kind::Toggle => {
                     let on = value.starts_with("on");
                     let sw = if th.unicode { if on { "━━●" } else { "●━━" } } else if on { "[ x]" } else { "[x ]" };
-                    let style = if selected { base } else if on { th.accent_bold() } else { th.muted() };
+                    let style = if selected || off { base } else if on { th.accent_bold() } else { th.muted() };
                     let w = put(buf, vx, y, sw, style, vw);
-                    put(buf, vx + w + 1, y, &value, if selected { base } else { th.dim() }, vw.saturating_sub(w + 1));
+                    put(buf, vx + w + 1, y, &value, if selected || off { base } else { th.dim() }, vw.saturating_sub(w + 1));
                     None
                 }
                 Kind::Choice | Kind::Number => Some(format!("‹ {value} ›")),
@@ -182,7 +194,7 @@ pub fn settings(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Option
                     Style::new().fg(th.accent_bright).add_modifier(Modifier::BOLD)
                 } else if changed {
                     base.add_modifier(Modifier::BOLD | Modifier::ITALIC)
-                } else if selected {
+                } else if selected || off {
                     base
                 } else {
                     th.accent()
@@ -198,7 +210,8 @@ pub fn settings(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Option
         let dy = inner.bottom().saturating_sub(3);
         let line = if th.unicode { "─" } else { "-" };
         put(buf, inner.x + 1, dy, &line.repeat(inner.width.saturating_sub(2) as usize), th.muted(), inner.width);
-        put(buf, inner.x + 2, dy + 1, &ellipsize(row.desc, inner.width.saturating_sub(4) as usize), th.dim(), inner.width);
+        let desc = if app.setting_disabled(row.id) { "Spotify only — local-only mode is on (turn it off in the Local tab to change this)." } else { row.desc };
+        put(buf, inner.x + 2, dy + 1, &ellipsize(desc, inner.width.saturating_sub(4) as usize), th.dim(), inner.width);
     }
     let foot = if th.unicode {
         "↑↓ select · ← → change · ⏎ toggle/edit · Tab next tab · Esc close · saved automatically"
@@ -212,9 +225,10 @@ pub fn settings(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Option
 pub fn init(app: &mut App, buf: &mut Buffer, area: Rect) {
     let Some(p) = app.init_prompt.as_ref() else { return };
     let (dir, warning, choice) = (p.dir.clone(), p.warning.clone(), p.choice);
+    let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| dir.display().to_string());
     let font = app.title_font();
-    let font = if crate::font::lines_for(font) <= 3 { font } else { crate::font::SLIM };
-    let th_h = crate::font::lines_for(font).max(1);
+    let font = if crate::font::rows(&name, font) <= 3 { font } else { crate::font::SLIM };
+    let th_h = crate::font::rows(&name, font);
     // Borders, padding, title, path, text, buttons and footer.
     let h = 12 + th_h + if warning.is_some() { 2 } else { 0 };
     let r = modal_area(area, 80, h, app);
@@ -223,7 +237,6 @@ pub fn init(app: &mut App, buf: &mut Buffer, area: Rect) {
     let x = inner.x + 3;
     let w = inner.width.saturating_sub(6);
     let mut y = inner.y + 1;
-    let name = dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| dir.display().to_string());
     y += big_title(app, buf, Rect { x, y, width: w, height: th_h }, &name, app.view_changed_at, false, font).max(1);
     put(buf, x, y, &ellipsize_start(&dir.display().to_string(), w as usize), th.dim(), w);
     y += 2;
@@ -257,7 +270,7 @@ pub fn init(app: &mut App, buf: &mut Buffer, area: Rect) {
 }
 
 pub fn about(app: &mut App, buf: &mut Buffer, area: Rect) {
-    let r = modal_area(area, 76, 25, app);
+    let r = modal_area(area, 76, 22, app);
     let inner = popup(app, buf, r, "About");
     let th = app.theme.clone();
     let mut y = inner.y + 1;
@@ -270,38 +283,54 @@ pub fn about(app: &mut App, buf: &mut Buffer, area: Rect) {
         LocalStatus::Off if crate::player::AVAILABLE => "built-in player off".into(),
         LocalStatus::Off => "built-in player not compiled in".into(),
     };
-    let lines: Vec<(String, Style)> = vec![
-        ("A better Spotify client, for the terminal".into(), th.bold()),
-        (format!("version {}", env!("CARGO_PKG_VERSION")), th.dim()),
-        (String::new(), Style::new()),
-        (format!("account      {}", app.user.as_ref().map(|u| format!("{} ({})", u.name(), u.product.as_deref().unwrap_or("?"))).unwrap_or_else(|| "not signed in".into())), Style::new()),
-        (format!("graphics     {}", app.images.protocol_name()), Style::new()),
-        (format!("player       {player}"), Style::new()),
-        (
-            format!(
-                "mode         {}",
-                match &app.offline {
-                    Some(o) => format!("local library “{}”", o.name),
-                    None if app.spotify.has_internal() => "Spotify (Spotify's own search & radio)".into(),
-                    None => "Spotify (Web API search)".into(),
-                }
-            ),
-            Style::new(),
-        ),
-        (format!("config       {}", app.paths.config_file().display()), Style::new()),
-        (String::new(), Style::new()),
-        ("Free software under the GNU GPL v3 (or later).".into(), th.dim()),
-        ("Built with ratatui, librespot and the Spotify Web API. Lyrics by LRCLIB.".into(), th.dim()),
-        ("Not affiliated with or endorsed by Spotify AB.".into(), th.muted()),
-    ];
-    for (l, st) in lines {
+    let mode = match &app.offline {
+        Some(o) => format!("local library “{}”", o.name),
+        None if app.spotify.has_internal() => "Spotify (Spotify's own search & radio)".into(),
+        None => "Spotify (Web API search)".into(),
+    };
+    let mode = if app.cfg.general.local_only { format!("{mode} · local-only") } else { mode };
+    let config = app.paths.config_file().display().to_string();
+    let config = match dirs::home_dir().map(|h| h.display().to_string()) {
+        Some(home) if !home.is_empty() && config.starts_with(&home) => format!("~{}", &config[home.len()..]),
+        _ => config,
+    };
+    let account = app.user.as_ref().map(|u| format!("{} ({})", u.name(), u.product.as_deref().unwrap_or("?"))).unwrap_or_else(|| if app.spotify_grayed() { "none — Spotify isn't used".into() } else { "not signed in".into() });
+    let info = [("account", account), ("graphics", app.images.protocol_name().to_string()), ("player", player), ("mode", mode), ("config", config)];
+
+    let max_w = inner.width.saturating_sub(4);
+    // One centered line; moves `y` down.
+    let centered = |buf: &mut Buffer, y: &mut u16, l: &str, st: Style| {
+        if *y < inner.bottom() {
+            let l = ellipsize(l, max_w as usize);
+            put(buf, inner.x + inner.width.saturating_sub(width(&l)) / 2, *y, &l, st, inner.width);
+        }
+        *y += 1;
+    };
+    centered(buf, &mut y, "A better Spotify client, for the terminal", th.bold());
+    centered(buf, &mut y, &format!("version {}", env!("CARGO_PKG_VERSION")), th.dim());
+    y += 1;
+
+    // Label / value rows: one block, centered as a whole, labels in a column.
+    const LABEL_W: u16 = 10;
+    let block_w = info.iter().map(|(_, v)| LABEL_W + width(v)).max().unwrap_or(0).min(max_w);
+    let x = inner.x + inner.width.saturating_sub(block_w) / 2;
+    let value_w = block_w.saturating_sub(LABEL_W) as usize;
+    for (label, value) in &info {
         if y >= inner.bottom() {
             break;
         }
-        let l = ellipsize(&l, inner.width.saturating_sub(4) as usize);
-        put(buf, inner.x + inner.width.saturating_sub(width(&l)) / 2, y, &l, st, inner.width);
+        put(buf, x, y, label, th.muted(), LABEL_W);
+        // Paths keep their end (the file name); everything else keeps its start.
+        let value = if *label == "config" { ellipsize_start(value, value_w) } else { ellipsize(value, value_w) };
+        put(buf, x + LABEL_W, y, &value, Style::new(), value_w as u16);
         y += 1;
     }
+    y += 1;
+
+    centered(buf, &mut y, "Free software under the GNU GPL v3 (or later).", th.dim());
+    centered(buf, &mut y, "Built with ratatui, librespot and the Spotify Web API.", th.dim());
+    centered(buf, &mut y, "Lyrics by LRCLIB.", th.dim());
+    centered(buf, &mut y, "Not affiliated with or endorsed by Spotify AB.", th.muted());
 }
 
 pub fn devices(app: &mut App, buf: &mut Buffer, area: Rect) {

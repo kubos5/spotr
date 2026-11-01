@@ -28,11 +28,28 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
     // Step indicator.
     let mut x = inner.x + 2;
     for (i, s) in steps.iter().enumerate() {
-        let done = i < idx;
+        let skipped = o.skips(*s);
+        let done = i < idx && !skipped;
         let cur = i == idx;
-        let dot = if th.unicode { if done { "●" } else if cur { "◉" } else { "○" } } else if done || cur { "*" } else { "o" };
+        let dot = if skipped {
+            if th.unicode { "⊘" } else { "-" }
+        } else if th.unicode {
+            if done { "●" } else if cur { "◉" } else { "○" }
+        } else if done || cur {
+            "*"
+        } else {
+            "o"
+        };
         let label = format!("{dot} {}", s.title());
-        let style = if cur { th.accent_bold() } else if done { th.accent() } else { th.muted() };
+        let style = if skipped {
+            th.disabled().add_modifier(Modifier::CROSSED_OUT)
+        } else if cur {
+            th.accent_bold()
+        } else if done {
+            th.accent()
+        } else {
+            th.muted()
+        };
         let lw = width(&label);
         if x + lw >= inner.right() {
             break;
@@ -100,6 +117,17 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
     let nstyle = if pulse > 0.5 || !app.motion.enabled { th.selected() } else { th.selected().add_modifier(Modifier::DIM) };
     put(buf, nx, by, &format!("  {next_label}  "), nstyle, nw);
     app.clicks.push((Rect { x: nx, y: by, width: nw, height: 1 }, Click::Onboard(OnboardClick::Next)));
+
+    // No Spotify at all: a second button next to Continue on the Client ID step.
+    if step == Step::App && !app.onboarding.as_ref().is_some_and(|o| o.only_login) {
+        let label = "Use local-only mode (Ctrl+L)";
+        let ow = width(label) + 4;
+        let ox = nx.saturating_sub(ow + 2);
+        if ox > inner.x + 2 + 14 {
+            put(buf, ox, by, &format!("  {label}  "), th.text().add_modifier(Modifier::REVERSED), ow);
+            app.clicks.push((Rect { x: ox, y: by, width: ow, height: 1 }, Click::Onboard(OnboardClick::LocalOnly)));
+        }
+    }
 }
 
 fn paragraph(buf: &mut Buffer, area: Rect, y: u16, text: &str, style: Style) -> u16 {
@@ -201,7 +229,14 @@ fn app_step(app: &mut App, buf: &mut Buffer, area: Rect) {
     if anim::pulse(1000) > 0.4 {
         put(buf, cursor_x.min(inner.right() - 1), inner.y, "▏", th.accent(), 1);
     }
-    let mark = if valid { format!("{} looks good", th.icon(crate::theme::Icon::Check)) } else { format!("{}/32", o.client_id.value.trim().len()) };
+    let mark = if valid {
+        format!("{} looks good", th.icon(crate::theme::Icon::Check))
+    } else if o.local_only && o.client_id.value.trim().is_empty() {
+        // Back here after picking local-only: Enter on an empty field keeps it.
+        "empty = local-only".to_string()
+    } else {
+        format!("{}/32", o.client_id.value.trim().len())
+    };
     put(buf, field.right() + 2, field.y + 1, &mark, if valid { th.success() } else { th.muted() }, 20);
 }
 
@@ -253,6 +288,10 @@ fn signin(app: &mut App, buf: &mut Buffer, area: Rect) {
 
 fn option_rows(app: &mut App, buf: &mut Buffer, area: Rect, rows: &[(String, String)], selected: usize) -> u16 {
     let th = app.theme.clone();
+    // Values start halfway across, or after the longest label in a narrow card.
+    let longest = rows.iter().map(|(l, _)| width(l)).max().unwrap_or(0);
+    let vx = area.x + (area.width / 2).max(longest + 4).min(area.width);
+    let vw = area.right().saturating_sub(vx);
     for (i, (label, value)) in rows.iter().enumerate() {
         let y = area.y + i as u16 * 2;
         if y >= area.bottom() {
@@ -265,9 +304,10 @@ fn option_rows(app: &mut App, buf: &mut Buffer, area: Rect, rows: &[(String, Str
         }
         let base = if sel { th.selected() } else { Style::new() };
         put(buf, area.x + 1, y, if sel { th.icon(crate::theme::Icon::Pointer) } else { " " }, base, 1);
-        put(buf, area.x + 3, y, label, base, area.width / 2);
+        put(buf, area.x + 3, y, label, base, vx.saturating_sub(area.x + 4));
+        let value = ellipsize(value, vw.saturating_sub(4) as usize);
         let v = if th.unicode { format!("‹ {value} ›") } else { format!("< {value} >") };
-        put(buf, area.x + area.width / 2, y, &v, if sel { base } else { th.accent() }, area.width / 2);
+        put(buf, vx, y, &v, if sel { base } else { th.accent() }, vw);
         app.clicks.push((rect, Click::Onboard(OnboardClick::Row(i))));
     }
     rows.len() as u16 * 2
@@ -310,7 +350,7 @@ fn look(app: &mut App, buf: &mut Buffer, area: Rect) {
     let row = app.onboarding.as_ref().map(|o| o.row).unwrap_or(0);
     put(buf, area.x, area.y, "Make it yours", th.accent_bold(), area.width);
     let c = &app.cfg.appearance;
-    let cover = if c.cover_mode == CoverMode::Image && !app.images.graphics { "Image (not supported here)".to_string() } else { c.cover_mode.label().to_string() };
+    let cover = if c.cover_mode == CoverMode::Image && !app.images.graphics { "Image → Text".to_string() } else { c.cover_mode.label().to_string() };
     let values = vec![
         cover,
         c.text_art.label().to_string(),
@@ -327,12 +367,17 @@ fn look(app: &mut App, buf: &mut Buffer, area: Rect) {
     let pw = area.right().saturating_sub(px);
     let prev = Rect { x: px, y: area.y + 2, width: pw, height: area.height.saturating_sub(3) };
     let inner = panel(app, buf, prev, Some("Preview"), false);
-    let ch = inner.height.saturating_sub(5).min(10);
+    // The title takes the rows it needs (big fonts wrap onto two lines); the
+    // cover gets the rest, above it, with the artist line below.
+    const TITLE: &str = "Night Drive";
+    let font = app.title_font();
+    let room = inner.height.saturating_sub(3 + 4);
+    let need = title_plan(TITLE, inner.width, room, font, app.cfg.appearance.long_title).rows();
+    let ch = inner.height.saturating_sub(need + 3).min(10);
     let crect = Rect { x: inner.x, y: inner.y, width: inner.width, height: ch };
     let born = app.onboarding.as_ref().map(|o| o.entered).unwrap_or(app.started);
     cover_preview(app, buf, crect, born);
-    let font = app.title_font();
-    big_title(app, buf, Rect { x: inner.x, y: inner.y + ch + 1, width: inner.width, height: crate::font::lines_for(font) }, "Night Drive", born, true, font);
+    big_title(app, buf, Rect { x: inner.x, y: inner.y + ch + 1, width: inner.width, height: need }, TITLE, born, true, font);
     let line = format!("{} The Synthwaves", th.icon(crate::theme::Icon::Artist));
     put(buf, inner.x + inner.width.saturating_sub(width(&line)) / 2, inner.bottom() - 1, &line, th.bold(), inner.width);
 }

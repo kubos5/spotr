@@ -41,8 +41,8 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
     put(buf, area.right().saturating_sub(width(&path)), y, &path, th.muted(), area.width);
     y += 1;
     let font = app.title_font();
-    let font = if area.height >= 18 && font::lines_for(font) <= 3 { font } else { font::PLAIN };
-    let title_h = font::lines_for(font).max(1);
+    let font = if area.height >= 18 && font::rows(&name, font) <= 3 { font } else { font::PLAIN };
+    let title_h = font::rows(&name, font);
     let born = app.track_changed_at;
     let used = big_title(app, buf, Rect { x: area.x, y, width: area.width, height: title_h }, &name, born, false, font);
     y += used.max(1);

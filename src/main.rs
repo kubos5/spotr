@@ -53,6 +53,8 @@ OPTIONS:
     -d, --directory [FOLDER]
                        Play the music files in FOLDER (default: the current folder)
                        instead of Spotify. Spotr offers to set the folder up first.
+                       With local-only mode on (Settings → Local), plain `spotr`
+                       always does this.
     --demo             Explore Spotr with a fictional catalog (no account needed)
     --setup            Run the first-time setup again
     --no-player        Don't start the built-in player this session
@@ -312,10 +314,17 @@ async fn run(cfg: Config, paths: Paths, args: Args) -> Result<()> {
         .build()?;
     let images = images::ImageStore::new(picker, paths.cache_dir.join("covers"));
     let mut app = App::new(cfg, paths, tx, http, images, args.demo);
-    // A local library: asked for with -d, or the current folder is one.
+    // A local library: asked for with -d, local-only mode (which always acts
+    // like -d), or the current folder is one.
     app.launch_dir = args.directory.clone().or_else(|| {
+        if args.demo {
+            return None;
+        }
+        if app.cfg.general.local_only {
+            return Some(local_dir(None));
+        }
         let cwd = std::env::current_dir().ok()?;
-        (!args.demo && local::store::is_initialized(&cwd)).then_some(cwd)
+        local::store::is_initialized(&cwd).then_some(cwd)
     });
     // Session-only: not saved to the config.
     app.no_player |= args.no_player;

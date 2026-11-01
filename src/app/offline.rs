@@ -127,7 +127,7 @@ impl App {
         if !crate::local::engine::AVAILABLE {
             self.toast(ToastKind::Error, "Spotr was built without local files support (the `local-files` feature)");
             if at_startup {
-                self.start_online();
+                self.local_launch_failed();
             }
             return;
         }
@@ -135,7 +135,7 @@ impl App {
         if !dir.is_dir() {
             self.toast(ToastKind::Error, format!("{} isn't a folder", dir.display()));
             if at_startup {
-                self.start_online();
+                self.local_launch_failed();
             }
             return;
         }
@@ -161,7 +161,7 @@ impl App {
             Err(e) => {
                 self.toast(ToastKind::Error, format!("Couldn't set up the folder: {e:#}"));
                 if p.at_startup {
-                    self.start_online();
+                    self.local_launch_failed();
                 }
             }
         }
@@ -171,9 +171,21 @@ impl App {
         let Some(p) = self.init_prompt.take() else { return };
         self.set_overlay(Overlay::None);
         if p.at_startup {
-            self.toast(ToastKind::Info, "Nothing was set up — `local` opens a music folder any time");
-            self.start_online();
+            if !self.cfg.general.local_only {
+                self.toast(ToastKind::Info, "Nothing was set up — `local` opens a music folder any time");
+            }
+            self.local_launch_failed();
         }
+    }
+
+    /// The folder Spotr was launched with didn't open: fall back to Spotify,
+    /// unless local-only mode keeps it away.
+    fn local_launch_failed(&mut self) {
+        if self.cfg.general.local_only && !self.spotify.is_demo() {
+            self.toast(ToastKind::Info, "Local-only mode — `local <folder>` opens a music folder, `online` uses Spotify");
+            return;
+        }
+        self.start_online();
     }
 
     fn enter_offline(&mut self, root: PathBuf) {

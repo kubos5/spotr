@@ -16,6 +16,8 @@ pub type FontId = &'static str;
 pub const BLOCK: FontId = "block";
 pub const SLIM: FontId = "slim";
 pub const PLAIN: FontId = "plain";
+/// The title font a new config starts with.
+pub const DEFAULT: FontId = "ansi-compact";
 
 /// FIGlet / TOIlet fonts compiled into Spotr (see assets/fonts/README.md).
 pub const BUNDLED: &[(&str, &str)] = &[
@@ -145,9 +147,9 @@ pub fn find(name: &str) -> Option<FontId> {
         .map(|e| e.id)
 }
 
-/// The configured font, falling back to Block if it no longer exists.
+/// The configured font, falling back to the default if it no longer exists.
 pub fn resolve(name: &str) -> FontId {
-    find(name).unwrap_or(BLOCK)
+    find(name).or_else(|| find(DEFAULT)).unwrap_or(BLOCK)
 }
 
 pub fn label(id: &str) -> &'static str {
@@ -333,6 +335,12 @@ pub fn lines_for(font: &str) -> u16 {
     entry(font).lines
 }
 
+/// Rows `text` takes in `font`, on one line. Often less than `lines_for`, which
+/// makes room for descenders (ANSI Compact keeps lower case).
+pub fn rows(text: &str, font: FontId) -> u16 {
+    render(text, font, 1).map(|b| b.height() as u16).filter(|h| *h > 0).unwrap_or_else(|| lines_for(font)).max(1)
+}
+
 /// Prepare a string for the bitmap fonts: transliterate to ASCII and upper-case.
 fn normalize(text: &str) -> String {
     deunicode::deunicode(text).to_uppercase()
@@ -416,7 +424,7 @@ mod tests {
     fn registry_lookup() {
         assert_eq!(find("ANSI Compact"), Some("ansi-compact"));
         assert_eq!(find("ansi"), Some("ansi-compact"));
-        assert_eq!(resolve("nope"), BLOCK);
+        assert_eq!(resolve("nope"), DEFAULT);
         assert_eq!(cycle(BLOCK, -1), PLAIN);
         assert_eq!(label("ansi-compact"), "ANSI Compact");
     }

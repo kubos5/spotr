@@ -58,6 +58,14 @@ impl Theme {
             Style::new().fg(Color::DarkGray)
         }
     }
+    /// Grayed out: options that don't apply right now.
+    pub fn disabled(&self) -> Style {
+        if self.high_contrast {
+            Style::new().add_modifier(Modifier::CROSSED_OUT)
+        } else {
+            Style::new().fg(Color::DarkGray).add_modifier(Modifier::DIM)
+        }
+    }
     pub fn accent(&self) -> Style {
         Style::new().fg(self.accent)
     }
