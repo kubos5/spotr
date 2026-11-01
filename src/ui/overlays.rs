@@ -257,7 +257,7 @@ pub fn init(app: &mut App, buf: &mut Buffer, area: Rect) {
 }
 
 pub fn about(app: &mut App, buf: &mut Buffer, area: Rect) {
-    let r = modal_area(area, 76, 25, app);
+    let r = modal_area(area, 76, 22, app);
     let inner = popup(app, buf, r, "About");
     let th = app.theme.clone();
     let mut y = inner.y + 1;
@@ -270,38 +270,54 @@ pub fn about(app: &mut App, buf: &mut Buffer, area: Rect) {
         LocalStatus::Off if crate::player::AVAILABLE => "built-in player off".into(),
         LocalStatus::Off => "built-in player not compiled in".into(),
     };
-    let lines: Vec<(String, Style)> = vec![
-        ("A better Spotify client, for the terminal".into(), th.bold()),
-        (format!("version {}", env!("CARGO_PKG_VERSION")), th.dim()),
-        (String::new(), Style::new()),
-        (format!("account      {}", app.user.as_ref().map(|u| format!("{} ({})", u.name(), u.product.as_deref().unwrap_or("?"))).unwrap_or_else(|| "not signed in".into())), Style::new()),
-        (format!("graphics     {}", app.images.protocol_name()), Style::new()),
-        (format!("player       {player}"), Style::new()),
-        (
-            format!(
-                "mode         {}",
-                match &app.offline {
-                    Some(o) => format!("local library “{}”", o.name),
-                    None if app.spotify.has_internal() => "Spotify (Spotify's own search & radio)".into(),
-                    None => "Spotify (Web API search)".into(),
-                }
-            ),
-            Style::new(),
-        ),
-        (format!("config       {}", app.paths.config_file().display()), Style::new()),
-        (String::new(), Style::new()),
-        ("Free software under the GNU GPL v3 (or later).".into(), th.dim()),
-        ("Built with ratatui, librespot and the Spotify Web API. Lyrics by LRCLIB.".into(), th.dim()),
-        ("Not affiliated with or endorsed by Spotify AB.".into(), th.muted()),
-    ];
-    for (l, st) in lines {
+    let mode = match &app.offline {
+        Some(o) => format!("local library “{}”", o.name),
+        None if app.spotify.has_internal() => "Spotify (Spotify's own search & radio)".into(),
+        None => "Spotify (Web API search)".into(),
+    };
+    let mode = if app.cfg.general.offline_only { format!("{mode} · offline-only") } else { mode };
+    let config = app.paths.config_file().display().to_string();
+    let config = match dirs::home_dir().map(|h| h.display().to_string()) {
+        Some(home) if !home.is_empty() && config.starts_with(&home) => format!("~{}", &config[home.len()..]),
+        _ => config,
+    };
+    let account = app.user.as_ref().map(|u| format!("{} ({})", u.name(), u.product.as_deref().unwrap_or("?"))).unwrap_or_else(|| "not signed in".into());
+    let info = [("account", account), ("graphics", app.images.protocol_name().to_string()), ("player", player), ("mode", mode), ("config", config)];
+
+    let max_w = inner.width.saturating_sub(4);
+    // One centered line; moves `y` down.
+    let centered = |buf: &mut Buffer, y: &mut u16, l: &str, st: Style| {
+        if *y < inner.bottom() {
+            let l = ellipsize(l, max_w as usize);
+            put(buf, inner.x + inner.width.saturating_sub(width(&l)) / 2, *y, &l, st, inner.width);
+        }
+        *y += 1;
+    };
+    centered(buf, &mut y, "A better Spotify client, for the terminal", th.bold());
+    centered(buf, &mut y, &format!("version {}", env!("CARGO_PKG_VERSION")), th.dim());
+    y += 1;
+
+    // Label / value rows: one block, centered as a whole, labels in a column.
+    const LABEL_W: u16 = 10;
+    let block_w = info.iter().map(|(_, v)| LABEL_W + width(v)).max().unwrap_or(0).min(max_w);
+    let x = inner.x + inner.width.saturating_sub(block_w) / 2;
+    let value_w = block_w.saturating_sub(LABEL_W) as usize;
+    for (label, value) in &info {
         if y >= inner.bottom() {
             break;
         }
-        let l = ellipsize(&l, inner.width.saturating_sub(4) as usize);
-        put(buf, inner.x + inner.width.saturating_sub(width(&l)) / 2, y, &l, st, inner.width);
+        put(buf, x, y, label, th.muted(), LABEL_W);
+        // Paths keep their end (the file name); everything else keeps its start.
+        let value = if *label == "config" { ellipsize_start(value, value_w) } else { ellipsize(value, value_w) };
+        put(buf, x + LABEL_W, y, &value, Style::new(), value_w as u16);
         y += 1;
     }
+    y += 1;
+
+    centered(buf, &mut y, "Free software under the GNU GPL v3 (or later).", th.dim());
+    centered(buf, &mut y, "Built with ratatui, librespot and the Spotify Web API.", th.dim());
+    centered(buf, &mut y, "Lyrics by LRCLIB.", th.dim());
+    centered(buf, &mut y, "Not affiliated with or endorsed by Spotify AB.", th.muted());
 }
 
 pub fn devices(app: &mut App, buf: &mut Buffer, area: Rect) {

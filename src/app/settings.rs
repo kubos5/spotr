@@ -84,6 +84,7 @@ pub enum Id {
     LocalSort,
     LocalLyrics,
     LocalResume,
+    OfflineOnly,
     LocalRescan,
     LocalMode,
     Key(Action),
@@ -192,6 +193,7 @@ pub fn rows(tab: usize) -> Vec<Row> {
         ],
         6 => vec![
             row(LocalMode, "Local library", "Play the music files in a folder instead of Spotify (`spotr -d [folder]`, or the `local` command).", Button),
+            row(OfflineOnly, "Offline-only mode", "Launching `spotr` always opens the current folder as a local library, like `spotr -d`.", Toggle),
             row(LocalSort, "Sort songs by", "Order of the song list in a local library (also the `sort` command).", Choice),
             row(LocalLyrics, "Lyrics from LRCLIB", "Local songs use .lrc files and embedded lyrics first; this looks online when there are none.", Toggle),
             row(LocalResume, "Offer to resume", "Show where you left off at the top of the library.", Toggle),
@@ -311,6 +313,7 @@ impl App {
             LocalSort => c.local.sort.label().into(),
             LocalLyrics => on_off(c.local.online_lyrics),
             LocalResume => on_off(c.local.resume),
+            OfflineOnly => on_off(c.general.offline_only),
             LocalRescan => if self.offline.is_some() { "Enter ⏎".into() } else { "local mode only".into() },
             LocalMode => match &self.offline {
                 Some(o) => format!("{} · Enter: back to Spotify", o.name),
@@ -440,6 +443,15 @@ impl App {
             }
             LocalLyrics => c.local.online_lyrics = !c.local.online_lyrics,
             LocalResume => c.local.resume = !c.local.resume,
+            OfflineOnly => {
+                c.general.offline_only = !c.general.offline_only;
+                let msg = if c.general.offline_only {
+                    "Offline-only: from now on `spotr` opens the folder it's started in as a local library"
+                } else {
+                    "Offline-only is off: `spotr` starts with Spotify again (`spotr -d` still opens a folder)"
+                };
+                self.toast(ToastKind::Info, msg);
+            }
             PollInterval => c.general.poll_interval_ms = (c.general.poll_interval_ms as i64 + 250 * dir as i64).clamp(250, 10_000) as u64,
             _ => return,
         }

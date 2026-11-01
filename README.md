@@ -418,6 +418,8 @@ my_music/
 
 Your music files are never changed. Delete `.spotr/` to reset the library.
 
+**Offline-only mode.** If you don't use Spotify at all, turn on *Settings → Local → Offline-only mode*, or pick **Use offline-only mode** on the Client ID step of the first-time setup. Then plain `spotr` always acts like `spotr -d`: it opens the folder you start it in, and never asks you to sign in to Spotify. `online` still switches to Spotify for that session.
+
 Spotr warns you before setting up your home folder, the root of the disk, or a folder outside your home folder.
 
 Once a folder has a `.spotr/` folder, launching `spotr` inside it opens it as a local library automatically. Elsewhere, Spotr starts with Spotify as usual. Switch at any time with `local [folder]` and `online`.
@@ -504,6 +506,7 @@ Example config:
 
 ```toml
 [general]
+offline_only = false        # `spotr` always acts like `spotr -d` (no Spotify)
 splash = true               # startup animation
 goodbye = true              # closing animation
 

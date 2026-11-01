@@ -61,6 +61,7 @@ pub enum OnboardClick {
     Row(usize),
     OpenBrowser,
     OpenDashboard,
+    OfflineOnly,
     Step(usize),
 }
 
@@ -325,6 +326,23 @@ impl App {
         self.onboarding_go(1);
     }
 
+    /// "Use offline-only mode" on the Client ID step: skip Spotify entirely and
+    /// open a local library now (and on every launch).
+    fn choose_offline_only(&mut self) {
+        let dir = self.return_to_local.take().or_else(|| std::env::current_dir().ok());
+        self.onboarding = None;
+        self.cfg.general.offline_only = true;
+        self.cfg.general.onboarded = true;
+        self.save_config();
+        self.needs_clear = true;
+        self.view_changed_at = Instant::now();
+        self.toast(ToastKind::Info, "Offline-only mode — Spotr plays the music files in a folder. Settings → Local turns it off.");
+        match dir {
+            Some(dir) => self.open_local(dir, true),
+            None => self.toast(ToastKind::Error, "Couldn't tell which folder Spotr was started in — `local <folder>` opens one"),
+        }
+    }
+
     fn finish_onboarding(&mut self) {
         let only_login = self.onboarding.as_ref().map(|o| o.only_login).unwrap_or(false);
         self.onboarding = None;
@@ -428,6 +446,11 @@ impl App {
             }
             return;
         }
+        // Ctrl+L: offline-only mode, from the Client ID step.
+        if ctrl && k.code == KeyCode::Char('l') && o.step == Step::App && !o.only_login {
+            self.choose_offline_only();
+            return;
+        }
         // Text fields.
         if o.step == Step::App {
             match k.code {
@@ -517,6 +540,7 @@ impl App {
             OnboardClick::OpenDashboard => {
                 let _ = open::that_detached(DASHBOARD_URL);
             }
+            OnboardClick::OfflineOnly => self.choose_offline_only(),
             OnboardClick::Step(i) => {
                 let cur = o.index();
                 if i < cur {

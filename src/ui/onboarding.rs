@@ -100,6 +100,17 @@ pub fn draw(app: &mut App, buf: &mut Buffer, area: Rect) {
     let nstyle = if pulse > 0.5 || !app.motion.enabled { th.selected() } else { th.selected().add_modifier(Modifier::DIM) };
     put(buf, nx, by, &format!("  {next_label}  "), nstyle, nw);
     app.clicks.push((Rect { x: nx, y: by, width: nw, height: 1 }, Click::Onboard(OnboardClick::Next)));
+
+    // No Spotify at all: a second button next to Continue on the Client ID step.
+    if step == Step::App && !app.onboarding.as_ref().is_some_and(|o| o.only_login) {
+        let label = "Use offline-only mode (Ctrl+L)";
+        let ow = width(label) + 4;
+        let ox = nx.saturating_sub(ow + 2);
+        if ox > inner.x + 2 + 14 {
+            put(buf, ox, by, &format!("  {label}  "), th.text().add_modifier(Modifier::REVERSED), ow);
+            app.clicks.push((Rect { x: ox, y: by, width: ow, height: 1 }, Click::Onboard(OnboardClick::OfflineOnly)));
+        }
+    }
 }
 
 fn paragraph(buf: &mut Buffer, area: Rect, y: u16, text: &str, style: Style) -> u16 {
