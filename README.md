@@ -7,7 +7,7 @@
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
 > ```
-> **Install** (Windows, in PowerShell)
+> **Install** (Windows, PowerShell)
 > ```powershell
 > irm https://raw.githubusercontent.com/kubos5/spotr/main/install.ps1 | iex
 > ```
@@ -26,13 +26,14 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 
 ---
 
-<br><br>
+<br><br><br><br>
 
 ## Contents
 
 - [Features](#features)
 - [Requirements](#requirements)
 - [Installation](#installation)
+  - [Uninstall](#uninstall)
 - [First launch](#first-launch)
 - [Using Spotr](#using-spotr)
   - [Layout](#layout)
@@ -51,7 +52,7 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 - [Development](#development)
 - [License](#license)
 
-<br><br>
+<br><br><br><br>
 
 ## Features
 
@@ -68,7 +69,7 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 
 ... and many more! [Try it for yourself](#installation)
 
-<br><br>
+<br><br><br><br>
 
 ## Requirements
 
@@ -90,7 +91,7 @@ _Optional:_
 - a terminal with a graphics protocol, such as kitty, WezTerm, iTerm2 or Ghostty.
   Every other terminal gets the text renderer.
 
-<br><br>
+<br><br><br><br>
 
 ## Installation
 
@@ -98,8 +99,14 @@ Custom installer (macOS & Linux)
 
 > [!TIP]
 > **Recommended**
+> 
+> macOS & Linux
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
+> ```
+> Windows, PowerShell
+> ```powershell
+> irm https://raw.githubusercontent.com/kubos5/spotr/main/install.ps1 | iex
 > ```
 
 ---
@@ -109,26 +116,6 @@ Homebrew (macOS & Linux)
 ```bash
 brew install kubos5/tap/spotr
 ```
-
----
-
-Custom installer (Windows)
-
-> [!TIP]
-> **Recommended on Windows.** In PowerShell:
-> ```powershell
-> irm https://raw.githubusercontent.com/kubos5/spotr/main/install.ps1 | iex
-> ```
-
-It always installs the latest release: it downloads the prebuilt `spotr.exe`, checks it against the release's checksum, puts it in `~\.cargo\bin` and adds that folder to your PATH. From a clone, `.\install.ps1` builds your copy from source instead (`-FromSource` always does, installing Rust and the C++ build tools if needed). Running it again updates Spotr.
-
-Changed your mind? This removes everything it added (your settings stay unless you say otherwise):
-
-```powershell
-irm https://raw.githubusercontent.com/kubos5/spotr/main/uninstall.ps1 | iex
-```
-
-`irm | iex` can't pass options, so set them first: `$env:SPOTR_YES = 1` skips the questions, `$env:SPOTR_FROM_SOURCE = 1` compiles.
 
 ---
 
@@ -191,7 +178,25 @@ In this build the visualizer always uses its simulation and `speed` is unavailab
 
 On Linux the OS media integration talks to D-Bus in pure Rust, so no extra system libraries are needed for it.
 
-<br><br>
+---
+
+### Uninstall
+
+> [!CAUTION]
+> Changed your mind?
+> 
+> **Uninstallers**
+> 
+> macOS & Linux
+> ```bash
+> curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/uninstall.sh | bash
+> ```
+> Windows, PowerShell
+> ```powershell
+> irm https://raw.githubusercontent.com/kubos5/spotr/main/uninstall.ps1 | iex
+> ```
+
+<br><br><br><br>
 
 ## First launch
 
@@ -207,7 +212,7 @@ When creating the app in the Spotify Developer Console:
 
 You can run the walkthrough again any time with `spotr --setup` or the `onboarding` command.
 
-<br><br>
+<br><br><br><br>
 
 ## Using Spotr
 
@@ -480,7 +485,7 @@ When music plays on another device, Spotr can't access the audio, so the visuali
 
 Turn it off in *Settings → Look → Mouse support* if you'd rather use the mouse select text.
 
-<br><br>
+<br><br><br><br>
 
 ## Configuration
 
@@ -591,7 +596,7 @@ Licenses for the bundled fonts are in [`assets/fonts/README.md`](assets/fonts/RE
 
 Your Spotify token is stored separately in `token.json` next to the config, readable only by your user. Spotr never sees your password.
 
-<br><br>
+<br><br><br><br>
 
 ## Command-line options
 
@@ -613,7 +618,7 @@ spotr [OPTIONS]
     -V, --version   Show the version
 ```
 
-<br><br>
+<br><br><br><br>
 
 ## How it works
 
@@ -661,7 +666,7 @@ install.ps1, uninstall.ps1   installer for Windows (PowerShell 5.1+)
 assets/fonts/      bundled FIGlet / TOIlet fonts (+ licenses)
 ```
 
-<br><br>
+<br><br><br><br>
 
 ## Troubleshooting
 
@@ -694,7 +699,7 @@ assets/fonts/      bundled FIGlet / TOIlet fonts (+ licenses)
 
 **Logs:** `spotr --debug` writes `spotr.log` to the cache directory (`spotr --print-paths`).
 
-<br><br>
+<br><br><br><br>
 
 ## Development
 
@@ -710,7 +715,7 @@ The `local-player` feature (on by default) pulls in librespot and cpal. Build wi
 
 Contributions are welcome.
 
-<br><br>
+<br><br><br><br>
 
 ## License
 
