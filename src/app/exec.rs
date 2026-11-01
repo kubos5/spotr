@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use super::*;
 use crate::commands::{self, parse_time};
-use crate::config::{AccentColor, ArrowMode, CoverMode, TextArt, VisStyle};
+use crate::config::{AccentColor, ArrowMode, CoverMode, QueueMode, TextArt, VisStyle};
 use crate::spotify::PlayRequest;
 
 impl App {
@@ -45,7 +45,36 @@ impl App {
 
     fn run_command(&mut self, name: &str, arg: &str) -> Result<Option<String>, String> {
         let num = |s: &str| s.trim().trim_end_matches(['s', 'x', '×', '%']).parse::<f32>().ok();
+        if self.offline.is_some()
+            && let Some(r) = self.offline_command(name, arg)
+        {
+            return r;
+        }
         match name {
+            "local" | "init" => {
+                let dir = if arg.is_empty() {
+                    std::env::current_dir().map_err(|e| e.to_string())?
+                } else {
+                    expand_path(arg)
+                };
+                if !dir.is_dir() {
+                    return Err(format!("{} isn't a folder", dir.display()));
+                }
+                if name == "init" && crate::local::store::is_initialized(&dir) {
+                    self.open_local(dir, false);
+                    return Ok(Some("Already a Spotr library — opened it".into()));
+                }
+                self.open_local(dir, false);
+                Ok(None)
+            }
+            "online" => {
+                if self.offline.is_none() {
+                    return Ok(Some("Already on Spotify".into()));
+                }
+                self.go_online();
+                Ok(None)
+            }
+            "rescan" | "sort" | "playlist" => Err(format!("`{name}` works in a local library — `local [folder]` opens one")),
             "play" => {
                 if arg.is_empty() {
                     if !self.pb.is_playing {
@@ -56,23 +85,22 @@ impl App {
                 if let Some(uri) = normalize_uri(arg) {
                     return self.play_uri(&uri).map(|_| None);
                 }
+                if self.offline.is_some() {
+                    return self.offline_play_query(arg);
+                }
                 let q = arg.to_string();
-                let dev = self.fallback_device();
                 let tx = self.tx.clone();
                 let sp = self.spotify.clone();
                 self.osd("⌕", format!("Searching “{q}”…"), None);
                 tokio::spawn(async move {
                     let r = async {
-                        let res = sp.search(&q, &["track"], 1, 0).await?;
-                        let t = res.tracks.into_iter().next().ok_or_else(|| anyhow::anyhow!("No song found for “{q}”"))?;
-                        sp.play(dev.as_deref(), Some(PlayRequest { uris: Some(vec![t.uri.clone()]), ..Default::default() }))
-                            .await?;
-                        Ok::<_, anyhow::Error>(t)
+                        let res = sp.search(&q, &["track"], 5, 0).await?;
+                        res.tracks.into_iter().next().ok_or_else(|| anyhow::anyhow!("No song found for “{q}”"))
                     }
                     .await;
                     let ev = match r {
-                        Ok(t) => AppEvent::Done { ok: Some(format!("Playing “{}” by {}", t.name, t.artist_names())), err: None, refresh: true },
-                        Err(e) => AppEvent::Done { ok: None, err: Some(e.to_string()), refresh: true },
+                        Ok(t) => AppEvent::PlaySearched(t),
+                        Err(e) => AppEvent::Done { ok: None, err: Some(e.to_string()), refresh: false },
                     };
                     let _ = tx.send(ev);
                 });
@@ -191,15 +219,8 @@ impl App {
             }
             "like" | "unlike" => {
                 let like = name == "like";
-                let selected = if self.search_open {
-                    match self.selected_item() {
-                        Some(Item::Track(t)) => Some(t.clone()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
-                self.set_liked(selected, like);
+                let target = self.target_track();
+                self.set_liked(target, like);
                 Ok(None)
             }
             "library" => {
@@ -512,6 +533,7 @@ impl App {
                 let sp = self.spotify.clone();
                 tokio::spawn(async move { sp.logout().await });
                 self.user = None;
+                self.liked = Default::default();
                 Ok(Some("Signed out. Run `login` to sign in again.".into()))
             }
             "whoami" => {
@@ -552,11 +574,30 @@ impl App {
 
     fn queue_command(&mut self, arg: &str) -> Result<Option<String>, String> {
         let (sub, rest) = commands::split(arg);
+        let spotify_only = "Spotify's queue can't be edited from outside Spotify — `queue mode spotr` for a queue you can rearrange";
         match sub {
             "" | "show" => {
                 self.set_view(MainView::Queue);
                 Ok(None)
             }
+            "mode" | "spotify" | "spotr" => {
+                let target = match (sub, rest) {
+                    ("spotify", _) | (_, "spotify") => QueueMode::Spotify,
+                    ("spotr", _) | (_, "spotr") => QueueMode::Spotr,
+                    (_, "" | "toggle") => self.cfg.playback.queue_mode.cycle(1),
+                    _ => return Err("Usage: queue mode [spotr | spotify]".into()),
+                };
+                if self.offline.is_some() {
+                    return Err("A local library always uses Spotr's queue".into());
+                }
+                self.set_queue_mode(target);
+                self.set_view(MainView::Queue);
+                Ok(Some(match target {
+                    QueueMode::Spotify => "Queue: Spotify-managed".into(),
+                    QueueMode::Spotr => "Queue: Spotr-managed".into(),
+                }))
+            }
+            "remove" | "rm" | "del" | "move" | "mv" | "clear" if self.spotify_queue() => Err(spotify_only.into()),
             "add" => {
                 if rest.is_empty() {
                     let t = match self.selected_item() {
@@ -566,11 +607,14 @@ impl App {
                     self.enqueue(t);
                     return Ok(None);
                 }
+                if self.offline.is_some() {
+                    return self.offline_queue_query(rest);
+                }
                 let q = rest.to_string();
                 let tx = self.tx.clone();
                 let sp = self.spotify.clone();
                 tokio::spawn(async move {
-                    let r = sp.search(&q, &["track"], 1, 0).await;
+                    let r = sp.search(&q, &["track"], 5, 0).await;
                     let ev = match r.map(|r| r.tracks.into_iter().next()) {
                         Ok(Some(t)) => AppEvent::Enqueue(t),
                         Ok(None) => AppEvent::Toast(ToastKind::Warn, format!("No song found for “{q}”")),
@@ -607,13 +651,25 @@ impl App {
                 self.queue.items.clear();
                 Ok(Some(format!("Cleared {n} songs from the queue")))
             }
-            _ => Err("Usage: queue [add <song> | remove <n> | move <from> <to> | clear]".into()),
+            _ => Err("Usage: queue [add <song> | remove <n> | move <from> <to> | clear | mode <spotr | spotify>]".into()),
         }
     }
 }
 
+/// `~/Music` and relative paths, as typed in a command.
+fn expand_path(arg: &str) -> std::path::PathBuf {
+    let arg = arg.trim().trim_matches(['"', '\'']);
+    let p = match arg.strip_prefix("~") {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => {
+            dirs::home_dir().unwrap_or_default().join(rest.trim_start_matches('/'))
+        }
+        _ => std::path::PathBuf::from(arg),
+    };
+    if p.is_absolute() { p } else { std::env::current_dir().unwrap_or_default().join(p) }
+}
+
 /// Copy text to the system clipboard through the terminal (OSC 52).
-fn osc52_copy(text: &str) {
+pub(super) fn osc52_copy(text: &str) {
     use base64::Engine;
     use std::io::Write;
     let b64 = base64::engine::general_purpose::STANDARD.encode(text);

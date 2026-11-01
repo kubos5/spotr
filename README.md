@@ -7,6 +7,10 @@
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/kubos5/spotr/main/install.sh | bash
 > ```
+> **Install** (Windows, in PowerShell)
+> ```powershell
+> irm https://raw.githubusercontent.com/kubos5/spotr/main/install.ps1 | iex
+> ```
 > See [more options](#installation) below
 
 <img width="1941" height="1276" alt="CleanShot 2026-10-10 at 16 41 55@2x" src="https://github.com/user-attachments/assets/6c158526-368d-4460-9d58-be2aa75acd12" />
@@ -15,6 +19,8 @@ Spotr is a super lightweight, blazingly fast and keyboard-first Spotify client, 
 It features polished animations throughout the UI, so that every action feels super satisfying.
 
 You can use Spotr as a Player device, or to control other Spotify devices linked to your account.
+
+No Spotify? Spotr also plays the music files in a folder: `spotr -d ~/Music` (see [Local files](#local-files)).
 
 Want to try it out? Run `spotr --demo` to take a look at the UI without an account.
 
@@ -34,6 +40,7 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
   - [Commands](#commands)
   - [Nice to know](#nice-to-know)
   - [Queue](#queue)
+  - [Local files](#local-files)
   - [Lyrics](#lyrics)
   - [Devices](#devices)
   - [Mouse](#mouse)
@@ -52,7 +59,9 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Now playing**         | The song name is drawn in ASCII art. Use any of the 9 built-in fonts, or [add your own](#title-fonts).                                                              |
 | **The command bar**     | The main way you'll interact with Spotr is the Command bar. Everything is a command. `play`/`pause`, `next`/`previous`, `skip 10`, `volume 60`, and many more.      |
-| **The search bar**      | To search up songs, artists, albums or playlists, you can use the Search bar. Focus it with `/`, or the `search` command.                                           |
+| **The search bar**      | To search up songs, artists, albums or playlists, you can use the Search bar. Focus it with `/`, or the `search` command. It uses Spotify's own search, the one in the Spotify apps. The **Liked Songs** tab searches just the songs you like. |
+| **Two queues**          | Spotr's own queue, which you can rearrange freely, or Spotify's queue, where Spotify's radio picks what plays after a song you searched. `Tab` in the queue switches. |
+| **Local files**         | Play the music in a folder, no account needed: `spotr -d`. Likes, playlists, play counts and a resume point live in a `.spotr/` folder next to your music.          |
 | **OS controls**         | Spotr reports Now playing data to the Operating System, so that you can control it through media keys.                                                              |
 | **Cover art rendering** | If you don't like images in the terminal, or your terminal doesn't support them, you can render the cover art as text instead, choosing from the 4 built-in styles. |
 | **Visualizer**          | Above the command bar, you'll see a pretty real time audio visualizer, available in 5 different styles.                                                             |
@@ -63,9 +72,11 @@ Want to try it out? Run `spotr --demo` to take a look at the UI without an accou
 
 ## Requirements
 
-_Mandatory:_
+_For Spotify:_
 - Spotify Premium
 - access to the Spotify Developer Console
+
+_For local files:_ nothing — any folder of MP3, FLAC, Ogg Vorbis, WAV, AIFF or M4A (AAC / ALAC) files.
 
 _For compiling:_
 - Rust 1.90+
@@ -101,18 +112,34 @@ brew install kubos5/tap/spotr
 
 ---
 
-PowerShell (Windows)
+Custom installer (Windows)
 
-```sh
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/kubos5/spotr/releases/download/v0.1.2/spotr-installer.ps1 | iex"
+> [!TIP]
+> **Recommended on Windows.** In PowerShell:
+> ```powershell
+> irm https://raw.githubusercontent.com/kubos5/spotr/main/install.ps1 | iex
+> ```
+
+It always installs the latest release: it downloads the prebuilt `spotr.exe`, checks it against the release's checksum, puts it in `~\.cargo\bin` and adds that folder to your PATH. From a clone, `.\install.ps1` builds your copy from source instead (`-FromSource` always does, installing Rust and the C++ build tools if needed). Running it again updates Spotr.
+
+Changed your mind? This removes everything it added (your settings stay unless you say otherwise):
+
+```powershell
+irm https://raw.githubusercontent.com/kubos5/spotr/main/uninstall.ps1 | iex
 ```
+
+`irm | iex` can't pass options, so set them first: `$env:SPOTR_YES = 1` skips the questions, `$env:SPOTR_FROM_SOURCE = 1` compiles.
 
 ---
 
-Shell script
+Release installers (cargo-dist)
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/kubos5/spotr/releases/latest/download/spotr-installer.ps1 | iex"
+```
 
 ```sh
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kubos5/spotr/releases/download/v0.1.2/spotr-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/kubos5/spotr/releases/latest/download/spotr-installer.sh | sh
 ```
 
 ---
@@ -231,7 +258,7 @@ Here are the default shortcuts:
 | `*`                                   | Like / unlike (the current song, or the selected one in lists)                                                |
 | `Ctrl+A`                              | Add the selected song to the queue                                                                            |
 | `Ctrl+L` or `F3`                      | Lyrics                                                                                                        |
-| `Ctrl+E` or `F4`                      | Queue                                                                                                         |
+| `Ctrl+E` or `F4`                      | Queue (`Tab` there switches between Spotr's and Spotify's queue)                                              |
 | `Ctrl+D` or `F5`                      | Devices                                                                                                       |
 | `Ctrl+B` or `F6`                      | Library                                                                                                       |
 | `Ctrl+T`                              | Cover art: image ↔ text                                                                                       |
@@ -249,6 +276,12 @@ In lists:
 In the queue:
 - `Shift+↑/↓` to move a song
 - `Del` to remove a song
+- `Tab` to switch between Spotr's queue and Spotify's queue
+
+In a local library:
+- `Tab` switches the list: Songs, Albums, Artists, Playlists, Liked Songs, Recent
+- `Enter` plays (the list keeps playing from there), `*` likes, `Ctrl+A` queues
+- `Del` on a local playlist's page removes the song from it
 
 In text fields:
 - `Ctrl+W` deletes a word
@@ -287,6 +320,12 @@ Here all of the commands:
 | `queue`                                                       | Show the queue                                                                                                                                             |
 | `queue add [query]`                                           | Add the selected / current song, or search for one                                                                                                         |
 | `queue remove <n>` · `queue move <from> <to>` · `queue clear` |                                                                                                                                                            |
+| `queue mode [spotr\|spotify]`                                 | Who manages "up next": Spotr's queue or Spotify's queue and radio                                                                                          |
+| `local [folder]` · `online`                                   | Open a folder as a local library (default: the current one) · back to Spotify                                                                             |
+| `init [folder]`                                               | Set up a folder as a library (creates `.spotr/` in it)                                                                                                     |
+| `rescan`                                                      | Look for new, changed or removed files                                                                                                                     |
+| `sort <artist\|title\|album\|added\|plays\|length>`             | How a local library's song list is ordered                                                                                                                 |
+| `playlist <new\|delete\|rename> <name>`                       | Local playlists (`addto <name>` adds the selected or current song)                                                                                        |
 | `search [query]`                                              | Open search, optionally with a query                                                                                                                       |
 | `library` · `liked` · `playlists` · `recent` · `top`          | Browse your library                                                                                                                                        |
 | `album` · `artist`                                            | Open the current song's album or artist                                                                                                                    |
@@ -321,12 +360,16 @@ Short aliases include:
 ### Nice to know
 
 - when searching, use `Tab` / `Shift+Tab` to cycle between
-  `All`, `Songs`, `Artists`, `Albums`, and `Playlists`
+  `All`, `Songs`, `Artists`, `Albums`, `Playlists` and `Liked Songs`
+- the **Liked Songs** tab searches only the songs you like (with nothing typed, it lists them all). Playing one plays your Liked Songs from there
+- songs you like have a `♥` before their title in every list, and show up in red in search results and your local library (*Settings → Search → Liked songs in red*)
 - you can paste a Spotify link anywhere (outside a text field) to play it.
 
 ### Queue
 
-The Spotify Web API can add to Spotify's queue but can't remove or reorder anything in it. So Spotr keeps **its own queue**, which you can edit freely:
+Spotr has two queues. Switch with `Tab` in the queue view (`Ctrl+E`), `queue mode spotr` / `queue mode spotify`, or *Settings → Playback → Queue*.
+
+**Spotr's queue** (the default). The Spotify Web API can add to Spotify's queue but can't remove or reorder anything in it. So Spotr keeps **its own queue**, which you can edit freely:
 
 - add songs with `Ctrl+A` on a search result, `queue add <song>`, or `queue add` (current)
 - reorder songs with `Shift+↑/↓`
@@ -336,6 +379,63 @@ The Spotify Web API can add to Spotify's queue but can't remove or reorder anyth
 Shortly before the current song ends (3 seconds by default, see *Settings → Playback → Queue handoff*), Spotr hands the next song to Spotify, so it plays seamlessly on any device. `next` also takes from your queue first.
 
 Anything already in Spotify's own queue (for example, added from your phone) is shown read-only underneath.
+
+What plays after a song you picked in search is up to *Settings → Playback → Songs from search*: the rest of its **album**, a Spotify **radio** of similar songs, or just that **single** song.
+
+**Spotify's queue.** Spotify manages "up next", like in the Spotify apps:
+
+- `Ctrl+A` adds songs straight to Spotify's queue (songs waiting in Spotr's queue move over when you switch)
+- a song you play from search starts **Spotify's song radio**: the song, then about 50 songs Spotify picks to go with it
+- the queue view lists what Spotify will play next; `Enter` skips ahead to a song
+
+Spotify's queue can't be reordered from outside Spotify, so `Shift+↑/↓` and `Del` only work in Spotr's queue.
+
+Song radio and Spotify's own search use the built-in player's sign-in. Without it, search falls back to the Web API and songs play on their own.
+
+### Local files
+
+Spotr can play the music files in a folder instead of Spotify. No account, no network needed.
+
+```bash
+spotr -d                  # the current folder
+spotr -d ~/Music/vinyl    # another folder
+```
+
+The first time, Spotr asks before setting the folder up. It then creates a `.spotr/` folder inside it:
+
+```
+my_music/
+    .spotr/        likes, playlists, play counts, where you left off, a scan cache
+    file1.mp3
+    file2.flac
+    …
+```
+
+Your music files are never changed. Delete `.spotr/` to reset the library.
+
+Spotr warns you before setting up your home folder, the root of the disk, or a folder outside your home folder.
+
+Once a folder has a `.spotr/` folder, launching `spotr` inside it opens it as a local library automatically. Elsewhere, Spotr starts with Spotify as usual. Switch at any time with `local [folder]` and `online`.
+
+Instead of "Nothing is playing", a local library shows its songs:
+
+- `Tab` switches between **Songs**, **Albums**, **Artists**, **Playlists**, **Liked Songs** and **Recent**
+- `Enter` plays, and the list keeps playing from there; `*` likes or unlikes; `Ctrl+A` queues
+- **Continue** at the top picks up where you left off (song, position, queue and shuffle)
+- `sort title` (or `artist`, `album`, `added`, `plays`, `length`) orders the songs
+
+Everything else works the same: the search bar searches the library as you type (accents and small typos are fine), album and artist pages, the queue, shuffle and loop, speed, the real visualizer, OS media keys.
+
+Other details:
+
+- **Tags**: title, artist, album, album artist, track and disc numbers, year and genre are read from the files. Untagged files are named from their path (`Artist/Album/01 - Title.mp3`, `Artist - Title.mp3`).
+- **Cover art**: embedded in the file, or a `cover.jpg` / `folder.png`… next to it.
+- **Lyrics**: an `.lrc` file next to the song (`01 - Title.lrc`), then lyrics embedded in its tags, then LRCLIB (turn off in *Settings → Local*).
+- **Playlists**: `playlist new Road trip`, then `addto road` on a selected song. `Del` on a playlist's page removes a song.
+- **Plays** count after half a song or 30 seconds, for *Recent*, *Most played* and `sort plays`.
+- **Song radio**: with *Songs from search* set to *Radio*, a searched song is followed by songs from the same artist and genre and your favorites.
+- **Scanning** reads only new or changed files after the first time. `rescan` picks up changes while Spotr runs.
+- **Formats**: MP3, FLAC, Ogg Vorbis, WAV, AIFF, M4A (AAC and ALAC), CAF and MKA. Opus isn't supported yet.
 
 ### Lyrics
 
@@ -432,7 +532,8 @@ seek_step = 10
 arrow_mode = "seek"         # ← / →: seek | track | speed | volume
 bracket_mode = "track"      # [ / ]: same choices
 volume = 70                 # built-in player volume, remembered automatically
-search_context = "album"    # album: keep playing the album after a searched song
+queue_mode = "spotr"        # spotr | spotify (Spotify's queue and song radio)
+search_context = "album"    # album | radio | single: what plays after a searched song
 
 [lyrics]
 ascii = false               # true = ASCII-art lyrics
@@ -440,8 +541,15 @@ font = ""                   # "" = same as title_font
 
 [search]
 live = true
+default_filter = "all"      # all | tracks | artists | albums | playlists | liked
+highlight_liked = true      # liked songs in red in search results and the local library
 remember_position = true
 close_on_play = true
+
+[local]
+sort = "artist"             # artist | title | album | recently-added | most-played | length
+online_lyrics = true        # look up LRCLIB when a local song has no .lrc file
+resume = true               # offer to continue where you left off
 
 [keys]
 play_pause = ["space"]
@@ -490,6 +598,8 @@ Your Spotify token is stored separately in `token.json` next to the config, read
 ```
 spotr [OPTIONS]
 
+    -d, --directory [FOLDER]
+                    Play the music files in FOLDER (default: the current folder)
     --demo          Explore Spotr with a fictional catalog (no account needed)
     --setup         Run the first-time setup again
     --no-player     Don't start the built-in player this session
@@ -521,6 +631,9 @@ spotr [OPTIONS]
 | ASCII fonts (`src/font.rs`, `src/figlet.rs`) | `block` and `slim` are tiny bitmap fonts (3×5 and 3×4 pixels per letter) drawn with half-block characters. The other fonts are FIGlet / TOIlet files, parsed at startup and laid out with "fitting" (letters slide together until they touch). Blank rows are trimmed, so a 6-line FIGlet font like ANSI Compact takes 3 lines. Accented letters fall back to an ASCII transliteration when a font lacks them (Beyoncé still renders). |
 | Theme | Spotr uses only the 16 ANSI palette colors plus "default" foreground and background. Your terminal theme decides how it looks. Only cover art uses true color. |
 | Search memory | Search keeps its query, filter, results, page stack (album → artist → …) and every list position in memory. Closing search only hides it. |
+| Liked Songs (`src/app/liked.rs`) | To show a `♥` on every liked song and search them, Spotr keeps your whole Liked Songs list, loaded 50 at a time in the background and saved in the cache folder. On later launches one request is enough: if Spotify's count and its newest 50 songs still match the saved copy, nothing changed. Likes made in Spotr update it right away. |
+| Spotify's search and radio (`src/spotify/internal.rs`) | The Web API's `/search` ranks results differently from the Spotify apps. The built-in player is signed in like a real Spotify client, so Spotr borrows its session to run the apps' own search query (Spotify's ranking and top result, personalized) and to fetch song radio mixes. If that fails, Spotr falls back to the Web API. |
+| Local files (`src/local/`) | `library.rs` walks the folder and reads tags with [Symphonia](https://github.com/pdeljanov/Symphonia), on several threads, caching them in `.spotr/index.json`. Local songs use Spotr's Spotify models with `local:` URIs, so every list, page and the now-playing view work unchanged. `engine.rs` decodes on its own thread into a short ring buffer; the `cpal` callback resamples it to the device rate (times the speed factor) and feeds the visualizer, like the built-in player's sink. `store.rs` keeps likes, plays, playlists and the resume point in `.spotr/`. |
 
 Source layout:
 
@@ -529,7 +642,8 @@ src/
   main.rs          terminal setup, CLI flags, event loop
   app/             state & logic: input, commands, playback, browse, settings, onboarding
   ui/              drawing: now playing, browse, bars, views, overlays, effects, onboarding
-  spotify/         Web API client, OAuth (PKCE), models, demo catalog
+  spotify/         Web API client, OAuth (PKCE), Spotify's own search & radio, models, demo catalog
+  local/           local files: library scan, .spotr store, audio engine (feature "local-files")
   player.rs        librespot integration + cpal sink (feature "local-player")
   visualizer.rs    FFT + rendering
   images.rs        cover cache, graphics protocols, text art
@@ -541,6 +655,8 @@ src/
   keys.rs          actions, key parsing, keymap
   lyrics.rs        LRCLIB client + LRC parser
   config.rs        settings file
+install.sh, uninstall.sh     installer for macOS & Linux
+install.ps1, uninstall.ps1   installer for Windows (PowerShell 5.1+)
   anim.rs, theme.rs, textinput.rs, audio.rs, logger.rs
 assets/fonts/      bundled FIGlet / TOIlet fonts (+ licenses)
 ```
@@ -568,9 +684,13 @@ assets/fonts/      bundled FIGlet / TOIlet fonts (+ licenses)
 - Liking, saving albums and following artists use the new unified library API (`/me/library`).
 - Playlist songs come from `/playlists/{id}/items`.
 - Artists' *Popular* songs come from a search, because Spotify removed the top-tracks endpoint.
-- Search returns at most 10 results per type (load more by scrolling in a single-type filter).
+- Web API search returns at most 10 results per type (load more by scrolling in a single-type filter). Spotify's own search, used with the built-in player, has no such limit.
 
 **A playlist shows no songs:** Spotify now only lists the songs of playlists you own or collaborate on. Others still play fine with the **Play** button at the top of their page.
+
+**Local files: "No music found":** Spotr looks in the folder and every subfolder (except hidden ones) for MP3, FLAC, Ogg Vorbis, WAV, AIFF, M4A, CAF and MKA files. Opus files aren't supported yet. Run `rescan` after adding music.
+
+**Local files: wrong artist or album names:** Spotr uses the files' tags. Untagged files get their names from the path, which works best as `Artist/Album/01 - Title.mp3`. Fix the tags with any tag editor and run `rescan`.
 
 **Logs:** `spotr --debug` writes `spotr.log` to the cache directory (`spotr --print-paths`).
 

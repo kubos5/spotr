@@ -15,6 +15,8 @@ pub enum PageKind {
     Recent,
     Top,
     Library,
+    /// Every song in a local library.
+    Songs,
 }
 
 pub struct Page {
@@ -50,7 +52,7 @@ pub struct PageData {
 const PLAY_ALL: &str = "Play";
 const SHUFFLE_ALL: &str = "Shuffle play";
 
-fn play_buttons(items: &mut Vec<Item>, has_tracks: bool) {
+pub(super) fn play_buttons(items: &mut Vec<Item>, has_tracks: bool) {
     if has_tracks {
         items.insert(0, Item::Link { title: PLAY_ALL.into(), subtitle: String::new(), target: LinkTarget::PlayAll });
         items.insert(1, Item::Link { title: SHUFFLE_ALL.into(), subtitle: String::new(), target: LinkTarget::ShuffleAll });
@@ -66,6 +68,10 @@ impl App {
             self.search_open = true;
             self.search.shown_at = Instant::now();
             self.needs_clear = true;
+            // A local library (and the Liked Songs tab) shows everything before you type.
+            if (self.offline.is_some() || self.search.filter == SearchFilter::Liked) && self.search.input.is_empty() && self.search.items.is_empty() {
+                self.run_search(false);
+            }
         }
         if focus_input {
             if self.focus != Focus::SearchInput && !self.search.input.is_empty() {
@@ -104,6 +110,32 @@ impl App {
 
     pub fn run_search(&mut self, append: bool) {
         let q = self.search.input.value.trim().to_string();
+        if self.search.filter == SearchFilter::Liked {
+            // Searched here, in the list of your Liked Songs.
+            if append {
+                return;
+            }
+            self.search.seq += 1;
+            let r = self.liked_search(&q);
+            self.search.query = q;
+            self.search.error = None;
+            self.search.loading = false;
+            let seq = self.search.seq;
+            self.on_search_results(seq, false, Ok(r));
+            return;
+        }
+        if self.offline.is_some() {
+            if append {
+                return;
+            }
+            self.search.seq += 1;
+            let r = self.off_search(&q);
+            self.search.query = q;
+            self.search.error = None;
+            let seq = self.search.seq;
+            self.on_search_results(seq, false, Ok(r));
+            return;
+        }
         if q.is_empty() {
             self.search.items.clear();
             self.search.query.clear();
@@ -123,6 +155,7 @@ impl App {
             SearchFilter::Artists => vec!["artist"],
             SearchFilter::Albums => vec!["album"],
             SearchFilter::Playlists => vec!["playlist"],
+            SearchFilter::Liked => unreachable!("searched locally"),
         };
         let limit = self.cfg.search.results_per_type;
         let offset = if append { self.search_count_of(filter) as u32 } else { 0 };
@@ -145,7 +178,7 @@ impl App {
     fn search_count_of(&self, f: SearchFilter) -> usize {
         let r = &self.search.results;
         match f {
-            SearchFilter::Tracks => r.tracks.len(),
+            SearchFilter::Tracks | SearchFilter::Liked => r.tracks.len(),
             SearchFilter::Artists => r.artists.len(),
             SearchFilter::Albums => r.albums.len(),
             SearchFilter::Playlists => r.playlists.len(),
@@ -191,8 +224,11 @@ impl App {
         let cap = |n: usize| n;
         match f {
             SearchFilter::All => {
+                // Spotify's own top result when it ranked one, otherwise a best guess.
+                // (An empty local query lists the whole library: no top result.)
                 if self.cfg.search.show_top_result
-                    && let Some(top) = top_result(r, &q) {
+                    && !q.is_empty()
+                    && let Some(top) = r.top.clone().or_else(|| top_result(r, &q)) {
                         items.push(top);
                     }
                 let sections: [(&str, Vec<Item>); 4] = [
@@ -208,17 +244,18 @@ impl App {
                     }
                 }
             }
-            SearchFilter::Tracks => items.extend(r.tracks.iter().cloned().map(Item::Track)),
+            SearchFilter::Tracks | SearchFilter::Liked => items.extend(r.tracks.iter().cloned().map(Item::Track)),
             SearchFilter::Artists => items.extend(r.artists.iter().cloned().map(Item::Artist)),
             SearchFilter::Albums => items.extend(r.albums.iter().cloned().map(Item::Album)),
             SearchFilter::Playlists => items.extend(r.playlists.iter().cloned().map(Item::Playlist)),
         }
+        // Which count says whether Spotify has more (none: everything is here).
         let idx = match f {
             SearchFilter::Tracks => 0,
             SearchFilter::Artists => 1,
             SearchFilter::Albums => 2,
             SearchFilter::Playlists => 3,
-            SearchFilter::All => 4,
+            SearchFilter::All | SearchFilter::Liked => 4,
         };
         self.search.has_more = idx < 4 && (self.search_count_of(f) as u32) < r.totals[idx];
         self.search.items = items;
@@ -229,12 +266,23 @@ impl App {
         if self.search.filter == f {
             return;
         }
+        let was_liked = self.search.filter == SearchFilter::Liked;
         self.search.filter = f;
         self.search.shown_at = Instant::now();
         // Re-query so single-type filters get a full page of results.
         let q = std::mem::take(&mut self.search.query);
         self.search.stack.clear();
-        if q.is_empty() {
+        if f == SearchFilter::Liked {
+            self.liked_tab_opened();
+        }
+        // Local searches (and the Liked Songs tab) list everything for an empty query.
+        let lists_all = self.offline.is_some() || f == SearchFilter::Liked;
+        if q.is_empty() && !lists_all {
+            if was_liked {
+                self.search.results = SearchResults::default();
+                self.search.items.clear();
+                self.search.list = ListNav::default();
+            }
             return;
         }
         self.search.input.set(&q);
@@ -300,6 +348,10 @@ impl App {
             Item::Artist(a) => self.open_artist(&a),
             Item::Playlist(p) => self.open_playlist(&p),
             Item::Link { target, .. } => match target {
+                LinkTarget::AllSongs => self.off_open_songs(),
+                LinkTarget::Resume => {
+                    self.resume_session();
+                }
                 LinkTarget::LikedSongs => self.open_liked(),
                 LinkTarget::Recent => self.open_recent(),
                 LinkTarget::TopTracks => self.open_top(),
@@ -322,6 +374,13 @@ impl App {
     fn play_page(&mut self) {
         let Some(p) = self.search.stack.last() else { return };
         let label = p.title.clone();
+        if self.offline.is_some() {
+            let tracks: Vec<Track> = p.items.iter().filter_map(|i| if let Item::Track(t) = i { Some(t.clone()) } else { None }).collect();
+            let start = if self.pb.shuffle { rand::random_range(0..tracks.len().max(1)) } else { 0 };
+            let uri = p.context_uri.clone();
+            self.off_play_list(tracks, start, label, uri);
+            return;
+        }
         let tracks: Vec<String> = p
             .items
             .iter()
@@ -341,6 +400,16 @@ impl App {
     fn play_track_in_context(&mut self, t: &Track) {
         let page = self.search.stack.last();
         let label = t.name.clone();
+        if self.offline.is_some()
+            && let Some(p) = page
+        {
+            // Local pages play as a whole list, however long.
+            let tracks: Vec<Track> = p.items.iter().filter_map(|i| if let Item::Track(t) = i { Some(t.clone()) } else { None }).collect();
+            let start = tracks.iter().position(|x| x.uri == t.uri).unwrap_or(0);
+            let (label, uri) = (p.title.clone(), p.context_uri.clone());
+            self.off_play_list(tracks, start, label, uri);
+            return;
+        }
         match page {
             Some(p) if p.context_uri.is_some() => {
                 let ctx = p.context_uri.clone().unwrap();
@@ -378,26 +447,40 @@ impl App {
                     .collect();
                 self.play_request(PlayRequest { uris: Some(uris), offset_uri: Some(t.uri.clone()), ..Default::default() }, label);
             }
-            None => match (&t.album, self.cfg.playback.search_context) {
-                (Some(a), SearchContext::Album) if !a.uri.is_empty() && !t.is_episode => {
-                    self.play_request(
-                        PlayRequest {
-                            context_uri: Some(a.uri.clone()),
-                            offset_uri: Some(t.uri.clone()),
-                            uris: Some(vec![t.uri.clone()]),
-                            ..Default::default()
-                        },
-                        label,
-                    );
-                }
-                _ => self.play_track_alone(t),
-            },
+            None if self.search.filter == SearchFilter::Liked => self.play_liked_from(t),
+            None => self.play_searched(t),
+        }
+    }
+
+    /// Play a song picked from search results (or `play <query>`): what comes
+    /// after it depends on the queue mode and the "Songs from search" setting.
+    pub fn play_searched(&mut self, t: &Track) {
+        if self.offline.is_some() {
+            self.off_play_searched(t);
+            return;
+        }
+        let radio = self.spotify_queue() || self.cfg.playback.search_context == SearchContext::Radio;
+        match (&t.album, self.cfg.playback.search_context) {
+            _ if t.is_episode => self.play_track_alone(t),
+            _ if radio => self.play_radio(t),
+            (Some(a), SearchContext::Album) if !a.uri.is_empty() => {
+                self.play_request(
+                    PlayRequest {
+                        context_uri: Some(a.uri.clone()),
+                        offset_uri: Some(t.uri.clone()),
+                        uris: Some(vec![t.uri.clone()]),
+                        ..Default::default()
+                    },
+                    t.name.clone(),
+                );
+            }
+            _ => self.play_track_alone(t),
         }
     }
 
     // ------------------------------------------------------------ pages
 
-    fn push_page(&mut self, kind: PageKind, title: String, image: Option<String>) -> u64 {
+    pub(super) fn push_page(&mut self, kind: PageKind, title: String, image: Option<String>) -> u64 {
         let id = self.next_page_id();
         if let Some(url) = &image {
             self.want_image(url);
@@ -521,6 +604,12 @@ impl App {
     }
 
     pub fn open_album(&mut self, a: &Album) {
+        if self.offline.is_some() {
+            if let Some(id) = a.id.clone() {
+                self.off_open_album(&id);
+            }
+            return;
+        }
         let Some(album_id) = a.id.clone().or_else(|| Some(uri_id(&a.uri).to_string())).filter(|s| !s.is_empty()) else {
             return;
         };
@@ -562,6 +651,10 @@ impl App {
     }
 
     pub fn open_artist_id(&mut self, artist_id: &str, name: &str, image: Option<String>) {
+        if self.offline.is_some() {
+            self.off_open_artist(artist_id);
+            return;
+        }
         let artist_id = artist_id.to_string();
         let id = self.push_page(PageKind::Artist, name.to_string(), image);
         let sp = self.spotify.clone();
@@ -607,6 +700,10 @@ impl App {
     }
 
     pub fn open_playlist(&mut self, p: &Playlist) {
+        if self.offline.is_some() {
+            self.off_open_playlist(&p.id);
+            return;
+        }
         let pid = if p.id.is_empty() { uri_id(&p.uri).to_string() } else { p.id.clone() };
         let id = self.push_page(PageKind::Playlist, p.name.clone(), best_image(&p.images, 300));
         let sp = self.spotify.clone();
@@ -656,6 +753,10 @@ impl App {
     }
 
     pub fn open_liked(&mut self) {
+        if self.offline.is_some() {
+            self.off_open_liked();
+            return;
+        }
         let id = self.push_page(PageKind::Liked, "Liked Songs".into(), None);
         let sp = self.spotify.clone();
         let user = self.user.as_ref().map(|u| u.id.clone());
@@ -683,6 +784,10 @@ impl App {
     }
 
     pub fn open_recent(&mut self) {
+        if self.offline.is_some() {
+            self.off_open_recent();
+            return;
+        }
         let id = self.push_page(PageKind::Recent, "Recently Played".into(), None);
         let sp = self.spotify.clone();
         self.spawn(async move {
@@ -710,6 +815,10 @@ impl App {
     }
 
     pub fn open_top(&mut self) {
+        if self.offline.is_some() {
+            self.off_open_top();
+            return;
+        }
         let id = self.push_page(PageKind::Top, "Your Top Songs".into(), None);
         let sp = self.spotify.clone();
         self.spawn(async move {
@@ -737,6 +846,10 @@ impl App {
     }
 
     pub fn open_library(&mut self, only_playlists: bool) {
+        if self.offline.is_some() {
+            self.off_open_library(only_playlists);
+            return;
+        }
         let title = if only_playlists { "Your Playlists" } else { "Your Library" };
         let id = self.push_page(PageKind::Library, title.into(), None);
         let sp = self.spotify.clone();
@@ -830,12 +943,12 @@ pub fn fmt_count(n: u64) -> String {
     }
 }
 
-fn fmt_long(ms: u64) -> String {
+pub(super) fn fmt_long(ms: u64) -> String {
     let m = ms / 60_000;
     if m >= 60 { format!("{} h {} min", m / 60, m % 60) } else { format!("{m} min") }
 }
 
-fn cap_first(s: &str) -> String {
+pub(super) fn cap_first(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),

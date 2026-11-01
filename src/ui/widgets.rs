@@ -16,6 +16,9 @@ use crate::font::FontId;
 use crate::font;
 use crate::spotify::models::fmt_duration;
 
+/// Cells between a liked song's heart and its title.
+pub const HEART_GAP: u16 = 2;
+
 /// Write a string clipped to `max` cells. Returns the width written.
 pub fn put(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style, max: u16) -> u16 {
     if max == 0 || y >= buf.area.bottom() || x >= buf.area.right() {
@@ -50,6 +53,25 @@ pub fn ellipsize(s: &str, max: usize) -> String {
     }
     out.push('…');
     out
+}
+
+/// Like `ellipsize`, but keeps the end (for paths: the folder name matters most).
+pub fn ellipsize_start(s: &str, max: usize) -> String {
+    if UnicodeWidthStr::width(s) <= max {
+        return s.to_string();
+    }
+    let mut out: Vec<char> = Vec::new();
+    let mut w = 0;
+    for c in s.chars().rev() {
+        let cw = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+        if w + cw + 1 > max {
+            break;
+        }
+        out.push(c);
+        w += cw;
+    }
+    out.push('…');
+    out.into_iter().rev().collect()
 }
 
 pub fn fill(buf: &mut Buffer, area: Rect, style: Style) {

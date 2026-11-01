@@ -138,7 +138,12 @@ fn info(app: &mut App, buf: &mut Buffer, area: Rect, track: &crate::spotify::mod
     if let Some(d) = &app.pb.device {
         status.push(format!("{} {}", app.theme.icon(Icon::Device), d.name));
     }
-    if let Some(ctx) = &app.pb.context_uri {
+    let radio = app.radio.as_ref().filter(|r| r.uris.contains(&track.uri)).map(|r| r.name.clone());
+    if let Some(name) = radio {
+        status.push(format!("{} radio · {name}", app.theme.icon(Icon::Album)));
+    } else if let Some(label) = app.offline.as_ref().map(|o| o.ctx_label.clone()).filter(|l| !l.is_empty()) {
+        status.push(format!("from {label}"));
+    } else if let Some(ctx) = &app.pb.context_uri {
         let kind = ctx.split(':').nth(1).unwrap_or("");
         let label = match kind {
             "album" => "from album",
@@ -153,6 +158,8 @@ fn info(app: &mut App, buf: &mut Buffer, area: Rect, track: &crate::spotify::mod
     }
     if !app.queue.items.is_empty() {
         status.push(format!("{} {} queued", app.theme.icon(Icon::Queue), app.queue.items.len()));
+    } else if app.spotify_queue() {
+        status.push(format!("{} Spotify queue", app.theme.icon(Icon::Queue)));
     }
     if let Some(at) = app.sleep_at {
         let mins = at.saturating_duration_since(std::time::Instant::now()).as_secs().div_ceil(60);

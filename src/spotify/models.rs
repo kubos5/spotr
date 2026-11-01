@@ -301,6 +301,9 @@ pub struct SearchResults {
     pub albums: Vec<Album>,
     pub playlists: Vec<Playlist>,
     pub totals: [u32; 4],
+    /// The top result as ranked by the search engine itself (Spotify's own,
+    /// personalized pick). `None` when the source doesn't rank one.
+    pub top: Option<Item>,
 }
 
 /// Anything that can appear in a result list.
@@ -317,6 +320,10 @@ pub enum Item {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LinkTarget {
+    /// Local library: every song.
+    AllSongs,
+    /// Local library: continue where you left off.
+    Resume,
     LikedSongs,
     Recent,
     TopTracks,
@@ -364,7 +371,7 @@ impl Item {
                 _ => "Album",
             },
             Item::Playlist(_) => "Playlist",
-            Item::Link { target: LinkTarget::PlayAll | LinkTarget::ShuffleAll, .. } => "",
+            Item::Link { target: LinkTarget::PlayAll | LinkTarget::ShuffleAll | LinkTarget::Resume, .. } => "",
             Item::Link { .. } => "Collection",
             Item::Header(_) => "",
         }

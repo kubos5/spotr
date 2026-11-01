@@ -343,6 +343,8 @@ impl App {
 
     /// Like `after_login` but doesn't restart the built-in player if it's already up.
     fn after_login_light(&mut self) {
+        self.online = true;
+        self.return_to_local = None;
         let sp = self.spotify.clone();
         self.spawn(async move {
             match sp.me().await {
@@ -400,6 +402,16 @@ impl App {
     pub(super) fn onboarding_key(&mut self, k: KeyEvent) {
         let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
         let Some(o) = self.onboarding.as_mut() else { return };
+        // Left a local library for Spotify, but it isn't set up: Esc goes back.
+        if k.code == KeyCode::Esc
+            && o.step == Step::Welcome
+            && let Some(dir) = self.return_to_local.take()
+        {
+            self.onboarding = None;
+            self.needs_clear = true;
+            self.open_local(dir, false);
+            return;
+        }
         // Ctrl+O opens the relevant page in the browser.
         if ctrl && k.code == KeyCode::Char('o') {
             match o.step {

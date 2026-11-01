@@ -26,7 +26,11 @@ pub fn search_bar(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Opti
             format!("{} searching", app.theme.spinner(app.frame))
         } else if !app.search.query.is_empty() && app.search.stack.is_empty() && app.search.error.is_none() {
             let n = app.search.items.iter().filter(|i| i.is_selectable()).count();
-            format!("{n} results")
+            if n == 1 { "1 result".into() } else { format!("{n} results") }
+        } else if app.search.filter == crate::config::SearchFilter::Liked && app.search.stack.is_empty() && !app.search.items.is_empty() {
+            // The Liked Songs tab lists them all before you type.
+            let n = app.search.items.len();
+            if n == 1 { "1 liked song".into() } else { format!("{n} liked songs") }
         } else {
             String::new()
         }
@@ -38,7 +42,11 @@ pub fn search_bar(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Opti
     put(buf, inner.right().saturating_sub(rw + 1), inner.y, &right, app.theme.dim(), rw);
 
     if app.search.input.is_empty() && !focused {
-        let hint = format!("Search songs, artists, albums, playlists…  ({})", app.keymap.hint(Action::FocusSearch, app.theme.unicode));
+        let what = match &app.offline {
+            Some(o) => format!("Search “{}”…", o.name),
+            None => "Search songs, artists, albums, playlists…".into(),
+        };
+        let hint = format!("{what}  ({})", app.keymap.hint(Action::FocusSearch, app.theme.unicode));
         put(buf, tx, inner.y, &ellipsize(&hint, field_w as usize), app.theme.muted(), field_w);
     } else {
         let (text, col) = app.search.input.view(field_w as usize);
@@ -58,6 +66,23 @@ pub fn search_bar(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Opti
 
 fn status_text(app: &App) -> String {
     let mut parts = Vec::new();
+    if let Some(o) = &app.offline {
+        parts.push(format!("{} {}", app.theme.icon(Icon::Playlist), o.name));
+        match o.scanning {
+            Some((done, total)) if total > 0 => parts.push(format!("{} {done}/{total}", app.theme.spinner(app.frame))),
+            Some(_) => parts.push(format!("{} scanning", app.theme.spinner(app.frame))),
+            None => parts.push(format!("{} songs", o.lib.entries.len())),
+        }
+        if let Some(at) = app.sleep_at {
+            let mins = at.saturating_duration_since(std::time::Instant::now()).as_secs().div_ceil(60);
+            parts.push(format!("☾ {mins}m"));
+        }
+        return parts.join("  ·  ");
+    }
+    if !app.online && app.onboarding.is_none() {
+        // Still deciding (the local library prompt at launch).
+        return String::new();
+    }
     if let Some(u) = &app.user {
         parts.push(u.name().to_string());
     }
@@ -129,7 +154,11 @@ pub fn command_bar(app: &mut App, buf: &mut Buffer, area: Rect, cursor: &mut Opt
             put(buf, tx + 2, inner.y, &ellipsize(&text, field_w.saturating_sub(2) as usize), Style::new(), field_w.saturating_sub(2));
         }
         None => {
-            let hint = "Type a command — play, next, skip 10, volume 60, lyrics, queue, help…";
+            let hint = if app.offline.is_some() {
+                "Type a command — play, next, like, sort, playlist new, rescan, online, help…"
+            } else {
+                "Type a command — play, next, skip 10, volume 60, lyrics, queue, help…"
+            };
             put(buf, tx, inner.y, &ellipsize(hint, field_w as usize), app.theme.muted(), field_w);
         }
     }
@@ -188,7 +217,7 @@ pub fn hints(app: &mut App, buf: &mut Buffer, area: Rect) {
         (app.keymap.hint(Action::FocusSearch, u), "search".into(), Action::FocusSearch),
         (app.keymap.hint(Action::Help, u), "help".into(), Action::Help),
         (app.keymap.hint(Action::Settings, u), "settings".into(), Action::Settings),
-        (app.keymap.hint(Action::CycleArrowMode, u), "arrow mode".into(), Action::CycleArrowMode),
+        (app.keymap.hint(Action::CycleArrowMode, u), if app.home_active() { "next view".into() } else { "arrow mode".into() }, Action::CycleArrowMode),
         (app.keymap.hint(Action::Lyrics, u), "lyrics".into(), Action::Lyrics),
         (app.keymap.hint(Action::Queue, u), "queue".into(), Action::Queue),
         (app.keymap.hint(Action::Devices, u), "devices".into(), Action::Devices),

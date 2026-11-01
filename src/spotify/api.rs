@@ -1,6 +1,7 @@
 //! Thin async client for the Spotify Web API.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
@@ -10,6 +11,7 @@ use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
 use super::auth::{self, TokenSet};
+use super::internal::Internal;
 use super::models::*;
 
 const API: &str = "https://api.spotify.com/v1";
@@ -46,6 +48,8 @@ pub struct Spotify {
     token_path: PathBuf,
     country: std::sync::Mutex<Option<String>>,
     demo: Option<super::demo::Demo>,
+    /// Spotify's own services, borrowed from the built-in player's session.
+    internal: std::sync::RwLock<Option<Arc<Internal>>>,
 }
 
 #[derive(Default, Clone)]
@@ -60,7 +64,7 @@ pub struct PlayRequest {
 impl Spotify {
     pub fn new(http: reqwest::Client, token_path: PathBuf) -> Self {
         let token = auth::load_token(&token_path);
-        Self { http, token: Mutex::new(token), token_path, country: Default::default(), demo: None }
+        Self { http, token: Mutex::new(token), token_path, country: Default::default(), demo: None, internal: Default::default() }
     }
 
     /// A client backed by the built-in fictional catalog (`--demo`).
@@ -70,6 +74,20 @@ impl Spotify {
 
     pub fn is_demo(&self) -> bool {
         self.demo.is_some()
+    }
+
+    /// Use (or stop using) Spotify's own search and radio.
+    pub fn set_internal(&self, internal: Option<Internal>) {
+        *self.internal.write().unwrap() = internal.map(Arc::new);
+    }
+
+    fn internal(&self) -> Option<Arc<Internal>> {
+        self.internal.read().unwrap().clone()
+    }
+
+    /// Whether search and radio go through Spotify's own services.
+    pub fn has_internal(&self) -> bool {
+        self.internal.read().unwrap().is_some()
     }
 
     pub async fn set_token(&self, t: TokenSet) -> Result<()> {
@@ -378,7 +396,41 @@ impl Spotify {
 
     // -------------------------------------------------------------- search
 
+    /// Search like the Spotify apps do when the built-in player's session is
+    /// available; the Web API's `/search` otherwise.
     pub async fn search(&self, q: &str, types: &[&str], limit: u32, offset: u32) -> Result<SearchResults> {
+        if self.demo.is_none()
+            && let Some(int) = self.internal()
+        {
+            match int.search(q, limit, offset).await {
+                Ok(mut r) => {
+                    // One query returns every kind; keep what was asked for.
+                    let want = |t: &str| types.contains(&t);
+                    if !want("track") {
+                        r.tracks.clear();
+                    }
+                    if !want("artist") {
+                        r.artists.clear();
+                    }
+                    if !want("album") {
+                        r.albums.clear();
+                    }
+                    if !want("playlist") {
+                        r.playlists.clear();
+                    }
+                    if types.len() < 4 {
+                        r.top = None;
+                    }
+                    return Ok(r);
+                }
+                Err(e) => log::info!("Spotify search unavailable ({e}); using the Web API"),
+            }
+        }
+        self.web_search(q, types, limit, offset).await
+    }
+
+    /// The Web API's `/search`.
+    pub async fn web_search(&self, q: &str, types: &[&str], limit: u32, offset: u32) -> Result<SearchResults> {
         if let Some(d) = &self.demo {
             let mut r = d.search(q);
             let skip = offset as usize;
@@ -412,7 +464,18 @@ impl Spotify {
         let (artists, t1) = list(&v, "artists");
         let (albums, t2) = list(&v, "albums");
         let (playlists, t3) = list(&v, "playlists");
-        Ok(SearchResults { tracks, artists, albums, playlists, totals: [t0, t1, t2, t3] })
+        Ok(SearchResults { tracks, artists, albums, playlists, totals: [t0, t1, t2, t3], top: None })
+    }
+
+    /// Spotify's song radio for a track: the track, then what Spotify would play after it.
+    pub async fn radio(&self, seed: &str) -> Result<Vec<String>> {
+        if let Some(d) = &self.demo {
+            return Ok(d.radio(seed));
+        }
+        match self.internal() {
+            Some(int) => int.radio(seed).await,
+            None => Err(anyhow!("Spotify radio needs the built-in player (`player login`)")),
+        }
     }
 
     // ------------------------------------------------------------- catalog
@@ -468,7 +531,7 @@ impl Spotify {
         let mut tracks = Vec::new();
         // Search returns at most 10 results per request.
         for offset in [0, 10] {
-            let r = self.search(&q, &["track"], 10, offset).await?;
+            let r = self.web_search(&q, &["track"], 10, offset).await?;
             let done = r.tracks.len() < 10;
             tracks.extend(r.tracks);
             if done {

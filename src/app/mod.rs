@@ -3,12 +3,15 @@
 mod browse;
 mod exec;
 mod input;
+mod liked;
+pub mod offline;
 pub mod onboarding;
 mod playback;
 pub mod settings;
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::future::Future;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -31,6 +34,7 @@ use crate::theme::Theme;
 use crate::visualizer::Visualizer;
 
 pub use browse::{Page, PageKind};
+pub use offline::{HomeTab, InitPrompt, Offline, OfflineEvent};
 pub use onboarding::Onboarding;
 pub use settings::SettingsState;
 
@@ -60,6 +64,18 @@ pub enum AppEvent {
     Enqueue(Track),
     /// A media key / OS media control.
     Media(crate::media::MediaKey),
+    /// Spotify's own search / radio became available (a session without the player).
+    Internal(Result<crate::spotify::internal::Internal, String>),
+    /// A song radio was resolved (or not) for `name`.
+    Radio { name: String, uris: Vec<String>, error: Option<String> },
+    /// `play <query>` found a song.
+    PlaySearched(Track),
+    /// Local files mode: scanning and the audio engine.
+    Offline(OfflineEvent),
+    /// Loading your Liked Songs.
+    Liked(liked::LikedEvent),
+    /// Spotify refused a like / unlike made here: undo it.
+    LikeFailed { track: Track, like: bool, error: String },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -84,6 +100,8 @@ pub enum Overlay {
     Settings,
     About,
     Devices,
+    /// "Set up this folder as a library?"
+    Init,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -157,6 +175,10 @@ pub enum Click {
     Toast(usize),
     /// Run a command line.
     Run(&'static str),
+    /// Local library home: a row, a tab, a choice in the setup prompt.
+    HomeRow(usize),
+    HomeTab(usize),
+    InitChoice(usize),
 }
 
 #[derive(Default)]
@@ -296,6 +318,12 @@ pub enum LocalStatus {
     Failed(String),
 }
 
+/// A Spotify song radio that's playing (for the "radio" label).
+pub struct RadioInfo {
+    pub name: String,
+    pub uris: HashSet<String>,
+}
+
 /// Current playback, as last reported by Spotify plus local interpolation.
 pub struct PlaybackState {
     pub track: Option<Track>,
@@ -429,6 +457,21 @@ pub struct App {
     /// OS "Now Playing" integration, when available.
     pub media: Option<crate::media::Media>,
     media_sync: MediaSync,
+    /// The Spotify radio being played, if any.
+    pub radio: Option<RadioInfo>,
+    /// Local files mode (a folder of music instead of Spotify).
+    pub offline: Option<Offline>,
+    pub init_prompt: Option<InitPrompt>,
+    /// Folder to open at launch (`-d`, or the current folder has `.spotr/`).
+    pub launch_dir: Option<PathBuf>,
+    /// Spotify mode is running (signed in, polling).
+    pub online: bool,
+    /// The Spotr queue from Spotify mode, kept while a local library is open.
+    pub online_queue: Vec<Track>,
+    /// The library left for Spotify, while Spotify still needs setting up.
+    pub return_to_local: Option<PathBuf>,
+    /// Your Liked Songs on Spotify.
+    pub liked: liked::Liked,
 }
 
 /// What we last told the OS, to only send changes.
@@ -541,6 +584,14 @@ impl App {
             no_player: demo,
             media: None,
             media_sync: MediaSync::default(),
+            radio: None,
+            offline: None,
+            init_prompt: None,
+            launch_dir: None,
+            online: false,
+            online_queue: Vec::new(),
+            return_to_local: None,
+            liked: Default::default(),
             cfg,
             paths,
         }
@@ -549,6 +600,15 @@ impl App {
     /// Called once after construction.
     pub fn start(&mut self) {
         *self.audio.device.lock().unwrap() = self.cfg.general.audio_device.clone();
+        if let Some(dir) = self.launch_dir.take() {
+            self.open_local(dir, true);
+            return;
+        }
+        self.start_online();
+    }
+
+    /// Spotify mode: sign in (or set up), then start syncing.
+    pub fn start_online(&mut self) {
         if self.spotify.is_demo() {
             self.after_login();
             self.toast(ToastKind::Info, "Demo mode — a fictional catalog, nothing is streamed. Run without --demo to use Spotify.");
@@ -564,6 +624,7 @@ impl App {
 
     /// Things to do once we have a working token.
     pub fn after_login(&mut self) {
+        self.online = true;
         let sp = self.spotify.clone();
         self.spawn(async move {
             match sp.me().await {
@@ -576,6 +637,14 @@ impl App {
         self.next_poll = Instant::now();
         if self.cfg.general.local_player && crate::player::AVAILABLE && !self.no_player {
             self.start_local_player(false);
+        } else if crate::player::AVAILABLE && !self.spotify.is_demo() && !self.spotify.has_internal() {
+            // No built-in player, but it signed in before: borrow its login for
+            // Spotify's own search and radio.
+            let dir = self.paths.librespot_dir();
+            if crate::player::has_cached_credentials(&dir) {
+                let (id, http) = (self.cfg.general.device_id.clone(), self.http.clone());
+                self.spawn(async move { AppEvent::Internal(crate::player::search_session(dir, id, http).await.map_err(|e| e.to_string())) });
+            }
         }
     }
 
@@ -620,6 +689,11 @@ impl App {
         F: FnOnce(Arc<Spotify>) -> Fut + Clone + Send + 'static,
         Fut: Future<Output = anyhow::Result<()>> + Send + 'static,
     {
+        if self.offline.is_some() {
+            // Nothing in a local library talks to Spotify.
+            let _ = self.tx.send(AppEvent::Toast(ToastKind::Info, "That needs Spotify — `online` switches back".into()));
+            return;
+        }
         let sp = self.spotify.clone();
         // Spotify drops idle devices from the active state; a command then fails with
         // "no active device" / "device not found". Wake the last device and retry once.
@@ -728,6 +802,9 @@ impl App {
     }
 
     pub fn is_local_active(&self) -> bool {
+        if self.offline.is_some() {
+            return true;
+        }
         self.local_status == LocalStatus::Ready
             && self
                 .pb
@@ -765,6 +842,8 @@ impl App {
             || self.pressed.map(|(_, t)| m.active(t, 300)).unwrap_or(false)
             || self.search.loading
             || !self.vis.idle()
+            || self.offline.as_ref().is_some_and(|o| o.scanning.is_some() || m.active(o.home.shown, 900))
+            || (self.overlay == Overlay::Init && m.active(self.view_changed_at, 400))
     }
 
     /// How long the main loop may sleep before the next frame.
@@ -814,13 +893,20 @@ impl App {
                 }
             }
             AppEvent::SpotifyQueue(r) => {
-                if let Ok(q) = r {
+                if let Ok(q) = r
+                    && self.offline.is_none()
+                {
                     self.queue.spotify = q.queue;
+                    let n = self.queue.spotify.len();
+                    if self.queue.list.selected >= n && self.spotify_queue() {
+                        self.queue.list.selected = n.saturating_sub(1);
+                    }
                 }
             }
             AppEvent::Saved { track_id, saved } => {
                 if self.pb.track.as_ref().and_then(|t| t.id.as_deref()) == Some(track_id.as_str()) {
                     self.saved_current = Some(saved);
+                    self.liked_reconcile(saved);
                 }
             }
             AppEvent::Image { url, result } => match result {
@@ -845,6 +931,7 @@ impl App {
             AppEvent::Auth(r) => self.on_auth(r),
             AppEvent::User(u) => {
                 self.user = Some(u.clone());
+                self.load_liked(&u.id);
                 if u.product.as_deref().is_some_and(|p| p != "premium") {
                     self.toast(
                         ToastKind::Warn,
@@ -855,7 +942,14 @@ impl App {
             AppEvent::Playlists(p) => self.playlists = p,
             AppEvent::Local(e) => self.on_local_event(e),
             AppEvent::LocalReady(r) => match r {
+                Ok(p) if self.offline.is_some() => {
+                    // A local library opened while the player was connecting.
+                    p.shutdown();
+                    std::thread::spawn(move || drop(p));
+                    self.local_status = LocalStatus::Off;
+                }
                 Ok(p) => {
+                    self.spotify.set_internal(p.internal(&self.http));
                     self.local = Some(p);
                     self.local_status = LocalStatus::Ready;
                     if self.local_retry.take().is_some() {
@@ -890,12 +984,38 @@ impl App {
                 }
                 if refresh {
                     self.poll_soon(350);
+                    // Queue changes take a moment to show up in Spotify's queue.
+                    if self.view == MainView::Queue {
+                        self.queue.fetched = Instant::now().checked_sub(Duration::from_millis(5400));
+                    }
                 }
             }
             AppEvent::DeviceLost { device } => self.on_device_lost(device),
             AppEvent::Toast(kind, msg) => self.toast(kind, msg),
             AppEvent::Enqueue(t) => self.enqueue(t),
             AppEvent::Media(key) => self.on_media_key(key),
+            AppEvent::Internal(r) => match r {
+                Ok(i) if self.local.is_none() => {
+                    log::info!("using Spotify's own search and radio");
+                    self.spotify.set_internal(Some(i));
+                }
+                Ok(_) => {}
+                Err(e) => log::info!("Spotify search session unavailable: {e}"),
+            },
+            AppEvent::Radio { name, uris, error } => self.on_radio(name, uris, error),
+            AppEvent::PlaySearched(t) => {
+                self.toast(ToastKind::Success, format!("Playing “{}” by {}", t.name, t.artist_names()));
+                self.play_searched(&t);
+            }
+            AppEvent::Offline(e) => self.on_offline_event(e),
+            AppEvent::Liked(e) => self.on_liked_event(e),
+            AppEvent::LikeFailed { track, like, error } => {
+                self.liked_changed(&track, !like);
+                if self.pb.track.as_ref().is_some_and(|t| t.uri == track.uri) {
+                    self.saved_current = Some(!like);
+                }
+                self.toast(ToastKind::Error, format!("Couldn't update Liked Songs: {error}"));
+            }
         }
     }
 
@@ -940,7 +1060,7 @@ impl App {
             self.volume_save_at = None;
             self.save_config();
         }
-        if self.local_retry.is_some_and(|(t, _)| now >= t) && self.local_status != LocalStatus::Connecting {
+        if self.local_retry.is_some_and(|(t, _)| now >= t) && self.local_status != LocalStatus::Connecting && self.offline.is_none() {
             self.start_local_player(false);
         }
 
@@ -952,10 +1072,12 @@ impl App {
         if now >= self.next_poll {
             self.poll_now();
         }
+        self.offline_tick();
 
-        // Debounced live search.
+        // Debounced live search (local libraries answer instantly, so barely wait).
+        let debounce = if self.offline.is_some() { self.cfg.search.debounce_ms.min(60) } else { self.cfg.search.debounce_ms };
         if let Some(t) = self.search.pending
-            && t.elapsed() >= Duration::from_millis(self.cfg.search.debounce_ms) {
+            && t.elapsed() >= Duration::from_millis(debounce) {
                 self.search.pending = None;
                 self.run_search(false);
             }
@@ -1014,7 +1136,7 @@ impl App {
     }
 
     pub fn spotify_ready(&self) -> bool {
-        self.onboarding.is_none()
+        self.onboarding.is_none() && self.offline.is_none() && self.online
     }
 
     /// Fetch an image if needed.
@@ -1037,7 +1159,13 @@ impl App {
             self.needs_clear = true;
         }
         if o == Overlay::Devices {
-            self.devices.outputs = if self.local.is_some() { crate::player::output_devices() } else { Vec::new() };
+            self.devices.outputs = if self.offline.is_some() {
+                crate::local::engine::output_devices()
+            } else if self.local.is_some() {
+                crate::player::output_devices()
+            } else {
+                Vec::new()
+            };
             self.fetch_devices();
         }
         if self.focus == Focus::Command {
@@ -1066,13 +1194,24 @@ impl App {
 
     pub fn fetch_devices(&mut self) {
         self.devices.fetched = Some(Instant::now());
+        if !self.spotify_ready() {
+            self.devices.list.clear();
+            return;
+        }
         self.devices.loading = true;
         let sp = self.spotify.clone();
         self.spawn(async move { AppEvent::Devices(sp.devices().await.map_err(|e| e.to_string())) });
     }
 
     pub fn fetch_spotify_queue(&mut self) {
+        if self.offline.is_some() {
+            self.refresh_upcoming();
+            return;
+        }
         self.queue.fetched = Some(Instant::now());
+        if !self.spotify_ready() {
+            return;
+        }
         let sp = self.spotify.clone();
         self.spawn(async move { AppEvent::SpotifyQueue(sp.queue().await.map_err(|e| e.to_string())) });
     }
@@ -1102,6 +1241,9 @@ impl App {
     /// Cover for the OS: always the original artwork, never our rendering.
     fn media_cover_url(&self, track: &Track) -> Option<String> {
         let url = track.image(640)?;
+        if url.starts_with(crate::local::library::ART_SCHEME) || url.starts_with(crate::local::library::FILE_SCHEME) {
+            return self.local_media_cover(&url);
+        }
         let Some(seed) = url.strip_prefix("demo://") else { return Some(url) };
         // Demo covers are generated; save one as a PNG the OS can load.
         let dir = self.paths.cache_dir.join("media");
@@ -1163,6 +1305,10 @@ impl App {
     pub fn quit(&mut self) {
         if self.volume_save_at.take().is_some() {
             self.save_config();
+        }
+        self.save_liked(true);
+        if self.offline.is_some() {
+            self.close_offline();
         }
         if let Some(p) = &self.local {
             p.shutdown();

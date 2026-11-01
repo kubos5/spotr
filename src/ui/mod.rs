@@ -4,6 +4,7 @@
 mod bars;
 mod browse;
 mod effects;
+mod home;
 mod nowplaying;
 mod onboarding;
 mod overlays;
@@ -47,6 +48,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Overlay::Settings => overlays::settings(app, buf, area, &mut cursor),
         Overlay::About => overlays::about(app, buf, area),
         Overlay::Devices => overlays::devices(app, buf, area),
+        Overlay::Init => overlays::init(app, buf, area),
         Overlay::None => {}
     }
     if app.focus == Focus::Command {
@@ -63,7 +65,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 }
 
 fn draw_main_mode(app: &mut App, buf: &mut ratatui::buffer::Buffer, area: Rect, cursor: &mut Option<(u16, u16)>) {
-    let vis_h = if app.cfg.visualizer.enabled {
+    // The local library's song list gets the visualizer's rows while nothing plays.
+    let home = app.home_active();
+    let vis_h = if app.cfg.visualizer.enabled && !home {
         app.cfg.visualizer.height.min(area.height.saturating_sub(16) / 2)
     } else {
         0
@@ -80,6 +84,7 @@ fn draw_main_mode(app: &mut App, buf: &mut ratatui::buffer::Buffer, area: Rect, 
 
     bars::search_bar(app, buf, top, cursor);
     match app.view {
+        MainView::NowPlaying if home => home::draw(app, buf, main),
         MainView::NowPlaying => nowplaying::draw(app, buf, main),
         MainView::Lyrics => views::lyrics(app, buf, main),
         MainView::Queue => views::queue(app, buf, main),

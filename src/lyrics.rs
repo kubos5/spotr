@@ -55,6 +55,21 @@ struct LrcLibEntry {
     instrumental: bool,
 }
 
+impl Lyrics {
+    /// Lyrics from an `.lrc` file or a tag: synced when it has timestamps.
+    pub fn from_text(text: &str) -> Option<Lyrics> {
+        let synced = parse_lrc(text);
+        if !synced.is_empty() {
+            return Some(Lyrics { lines: synced, synced: true, instrumental: false });
+        }
+        let lines: Vec<(Option<u64>, String)> = text.lines().map(|l| (None, l.trim_end().to_string())).collect();
+        if lines.iter().all(|(_, l)| l.trim().is_empty()) {
+            return None;
+        }
+        Some(Lyrics { lines, synced: false, instrumental: false })
+    }
+}
+
 pub fn parse_lrc(text: &str) -> Vec<(Option<u64>, String)> {
     let mut out = Vec::new();
     for line in text.lines() {
@@ -148,5 +163,9 @@ mod tests {
         assert_eq!(l[0], (Some(1500), "Hello".into()));
         assert_eq!(l[1], (Some(3000), "World".into()));
         assert_eq!(l[2].0, Some(62_000));
+        assert!(Lyrics::from_text("[00:01.00]Hi").unwrap().synced);
+        let plain = Lyrics::from_text("Line one\nLine two").unwrap();
+        assert_eq!((plain.synced, plain.lines.len()), (false, 2));
+        assert!(Lyrics::from_text("  \n ").is_none());
     }
 }

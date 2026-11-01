@@ -61,6 +61,17 @@ mod stub {
         pub fn session(&self) -> u64 {
             0
         }
+        pub fn internal(&self, _http: &reqwest::Client) -> Option<crate::spotify::internal::Internal> {
+            None
+        }
+    }
+
+    pub async fn search_session(
+        _cache_dir: std::path::PathBuf,
+        _device_id: String,
+        _http: reqwest::Client,
+    ) -> anyhow::Result<crate::spotify::internal::Internal> {
+        anyhow::bail!("Spotr was built without the `local-player` feature")
     }
 
     pub async fn start(
@@ -111,6 +122,8 @@ mod imp {
         spirc: Spirc,
         _player: Arc<Player>,
         session: u64,
+        /// The signed-in librespot session, shared with Spotr's search and radio.
+        handle: Session,
     }
 
     /// Numbers each started session, so a stale `Disconnected` can be ignored.
@@ -126,6 +139,24 @@ mod imp {
         pub fn activate(&self) {
             let _ = self.spirc.activate();
         }
+        /// Spotify's own search and radio, through this player's session.
+        pub fn internal(&self, http: &reqwest::Client) -> Option<crate::spotify::internal::Internal> {
+            Some(crate::spotify::internal::Internal::new(self.handle.clone(), http.clone()))
+        }
+    }
+
+    /// A session without a Connect device, for search and radio when the
+    /// built-in player is turned off but has signed in before.
+    pub async fn search_session(
+        cache_dir: std::path::PathBuf,
+        device_id: String,
+        http: reqwest::Client,
+    ) -> Result<crate::spotify::internal::Internal> {
+        let cache = Cache::new(Some(cache_dir.as_path()), None, None, None).map_err(|e| anyhow!("librespot cache: {e}"))?;
+        let creds = cache.credentials().ok_or_else(|| anyhow!("no saved sign-in"))?;
+        let session = Session::new(SessionConfig { device_id, ..SessionConfig::default() }, None);
+        session.connect(creds, false).await.map_err(|e| anyhow!("{e}"))?;
+        Ok(crate::spotify::internal::Internal::new(session, http))
     }
 
     pub fn has_cached_credentials(dir: &std::path::Path) -> bool {
@@ -200,7 +231,7 @@ mod imp {
                     });
                     spawn_event_forwarder(player.clone(), tx.clone());
                     let _ = tx.send(AppEvent::Local(LocalEvent::Connected { device_name: opts.device_name.clone() }));
-                    return Ok(LocalPlayer { spirc, _player: player, session: id });
+                    return Ok(LocalPlayer { spirc, _player: player, session: id, handle: session });
                 }
                 Err(e) => {
                     log::warn!("librespot connect failed: {e}");

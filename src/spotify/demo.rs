@@ -272,18 +272,19 @@ impl Demo {
             progress_ms: s.progress_ms,
             is_playing: s.playing,
             item: Some(self.tracks[s.track].clone()),
-            context: s.context.clone().map(|uri| Context { uri, kind: "album".into() }),
+            context: s.context.clone().map(|uri| Context { kind: uri.split(':').nth(1).unwrap_or("album").into(), uri }),
         })
     }
 
     pub fn play(&self, ctx: Option<String>, uris: Option<Vec<String>>, offset: Option<String>, offset_pos: Option<u32>) {
         self.tick();
-        let mut s = self.state.lock().unwrap();
+        // Before locking: Liked Songs looks at the state too.
         let list: Vec<usize> = match (&ctx, &uris) {
             (Some(c), _) => self.context_list(c),
             (None, Some(u)) => u.iter().filter_map(|u| self.idx(u)).collect(),
             _ => Vec::new(),
         };
+        let mut s = self.state.lock().unwrap();
         if !list.is_empty() {
             let start = offset
                 .as_deref()
@@ -387,7 +388,7 @@ impl Demo {
             .filter(|p| hit(&format!("{} {}", p.name, p.description.clone().unwrap_or_default())))
             .collect();
         let totals = [tracks.len() as u32, artists.len() as u32, albums.len() as u32, playlists.len() as u32];
-        SearchResults { tracks, artists, albums, playlists, totals }
+        SearchResults { tracks, artists, albums, playlists, totals, top: None }
     }
 
     pub fn album(&self, id: &str) -> Option<(Album, Vec<Track>)> {
@@ -432,6 +433,13 @@ impl Demo {
 
     pub fn followed_artists(&self) -> Vec<Artist> {
         self.artists.clone()
+    }
+
+    /// A "song radio": the seed, then the other songs by popularity.
+    pub fn radio(&self, seed: &str) -> Vec<String> {
+        let mut v: Vec<&Track> = self.tracks.iter().filter(|t| t.uri != seed).collect();
+        v.sort_by_key(|t| std::cmp::Reverse(t.popularity.unwrap_or(0)));
+        std::iter::once(seed.to_string()).chain(v.into_iter().take(24).map(|t| t.uri.clone())).collect()
     }
 
     pub fn top_tracks(&self) -> Vec<Track> {
