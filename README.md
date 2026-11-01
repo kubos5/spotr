@@ -11,7 +11,16 @@
 > ```powershell
 > irm https://raw.githubusercontent.com/kubos5/spotr/main/install.ps1 | iex
 > ```
-> See [more options](#installation) below
+
+> [!NOTE]
+> Also available on **Homebrew**
+> 
+> _I put a lot of effort into the install script though..._
+> ```bash
+> brew install kubost/tap/spotr
+> ```
+
+> See [more installation options](#installation) below
 
 <img width="1941" height="1276" alt="CleanShot 2026-10-10 at 16 41 55@2x" src="https://github.com/user-attachments/assets/6c158526-368d-4460-9d58-be2aa75acd12" />
 
